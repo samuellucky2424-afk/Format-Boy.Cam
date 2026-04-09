@@ -70,7 +70,7 @@ export default function Sidebar() {
         <div className="h-20 flex items-center justify-between px-5 border-b border-[#18181b]">
           <div className="flex items-center gap-3">
             <div className="w-10 h-10 rounded-xl overflow-hidden shadow-lg shadow-blue-500/20">
-              <img src="/logo.png" alt="Logo" className="w-full h-full object-cover" />
+              <img src="./logo.png" alt="Logo" className="w-full h-full object-cover" />
             </div>
             <div>
               <span className="text-lg font-bold text-white tracking-tight">Format-Boy.CAM</span>

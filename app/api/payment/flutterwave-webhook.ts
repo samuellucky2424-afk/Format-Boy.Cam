@@ -1,7 +1,12 @@
 // @ts-nocheck
 import { supabaseAdmin, supabaseAdminConfigError } from '../supabase.js';
 
-const NGN_PER_CREDIT = 30;
+const CREDIT_PRICING = {
+  500: 18500,
+  1000: 37000,
+  2000: 74000,
+  5000: 185000
+};
 const CREDITS_PER_SECOND = 2;
 
 async function loadOrCreateCreditAccount(userId) {
@@ -93,7 +98,20 @@ export default async function handler(req, res) {
       return res.status(200).json({ status: 'ok' });
     }
 
-    const creditsToAdd = Math.floor(Number(amount || 0) / NGN_PER_CREDIT);
+    let creditsToAdd = 0;
+    const paidAmount = Number(amount || 0);
+    for (const [credits, expectedPrice] of Object.entries(CREDIT_PRICING)) {
+      if (paidAmount === expectedPrice) {
+        creditsToAdd = Number(credits);
+        break;
+      }
+    }
+
+    if (creditsToAdd === 0) {
+      console.error(`Webhook: amount ${paidAmount} does not match any valid credit tier.`);
+      return res.status(200).json({ status: 'ok' });
+    }
+
     const creditAccount = await loadOrCreateCreditAccount(userId);
     const newCredits = (creditAccount.credits || 0) + creditsToAdd;
 
@@ -112,7 +130,9 @@ export default async function handler(req, res) {
         credits: creditsToAdd,
         type: 'credit',
         status: 'success',
+        tx_ref,
         reference: tx_ref,
+        provider: 'flutterwave',
         description: 'Credit purchase via Flutterwave webhook',
         metadata: {
           provider: 'flutterwave',

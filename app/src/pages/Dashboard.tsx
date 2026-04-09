@@ -445,7 +445,7 @@ function Dashboard() {
       {/* Header */}
       <header className="flex items-center justify-between px-6 py-4 flex-shrink-0 relative z-10">
         <div className="flex items-center gap-[2px]">
-          <img src="/logo.png" alt="Logo" className="w-8 h-8 object-cover rounded-full mr-2" />
+          <img src="./logo.png" alt="Logo" className="w-8 h-8 object-cover rounded-full mr-2" />
           <span className="text-xl font-bold tracking-widest text-[#FFFFFF]">FORMAT-BOY</span>
           <span className="text-xl font-medium tracking-widest text-[#71717A]">.CAM</span>
         </div>

@@ -6,8 +6,7 @@ import { inspectAttr } from 'kimi-plugin-inspect-react'
 // https://vite.dev/config/
 export default defineConfig(({ mode }) => {
   const env = loadEnv(mode, __dirname, '');
-  const apiProxyTarget =
-    (env.API_PROXY_TARGET || env.VITE_API_BASE_URL || '').replace(/\/api\/?$/i, '') || 'http://localhost:3000';
+  const apiProxyTarget = (env.VITE_API_BASE_URL || '').replace(/\/api\/?$/i, '');
 
   return {
     base: './',
@@ -17,7 +16,7 @@ export default defineConfig(({ mode }) => {
         "@": path.resolve(__dirname, "./src"),
       },
     },
-    server: {
+    server: apiProxyTarget ? {
       proxy: {
         '/api': {
           target: apiProxyTarget,
@@ -25,6 +24,6 @@ export default defineConfig(({ mode }) => {
           secure: false,
         },
       },
-    },
+    } : undefined,
   };
 });

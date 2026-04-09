@@ -26,7 +26,9 @@ CREATE TABLE IF NOT EXISTS public.transactions (
   credits INTEGER DEFAULT 0 CHECK (credits >= 0),
   type TEXT NOT NULL CHECK (type IN ('credit', 'debit')),
   status TEXT NOT NULL DEFAULT 'pending' CHECK (status IN ('pending', 'success', 'failed')),
+  tx_ref TEXT,
   reference TEXT,
+  provider TEXT,
   description TEXT,
   metadata JSONB DEFAULT '{}',
   created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()

@@ -1,7 +1,12 @@
 // @ts-nocheck
 import { supabaseAdmin, supabaseAdminConfigError } from '../supabase.js';
 
-const NGN_PER_CREDIT = 30;
+const CREDIT_PRICING = {
+  500: 18500,
+  1000: 37000,
+  2000: 74000,
+  5000: 185000
+};
 const CREDITS_PER_SECOND = 2;
 
 async function loadOrCreateCreditAccount(userId) {
@@ -131,7 +136,21 @@ export default async function handler(req, res) {
       });
     }
 
-    const creditsToAdd = Math.floor(amount / NGN_PER_CREDIT);
+    // 5. Map amount strictly to credits without trusting frontend meta
+    let creditsToAdd = 0;
+    for (const [credits, expectedPrice] of Object.entries(CREDIT_PRICING)) {
+      if (amount === expectedPrice) {
+        creditsToAdd = Number(credits);
+        break;
+      }
+    }
+
+    if (creditsToAdd === 0) {
+      return res.status(400).json({
+        status: 'failed',
+        message: `Amount NGN ${amount} does not match any valid credit tier.`,
+      });
+    }
     const creditAccount = await loadOrCreateCreditAccount(userId);
     const newCredits = (creditAccount.credits || 0) + creditsToAdd;
 
@@ -150,7 +169,9 @@ export default async function handler(req, res) {
         credits: creditsToAdd,
         type: 'credit',
         status: 'success',
+        tx_ref: reference,
         reference,
+        provider: 'flutterwave',
         description: 'Credit purchase via Flutterwave',
         metadata: {
           provider: 'flutterwave',

@@ -52,7 +52,7 @@ export function Navigation({ children }: NavigationProps) {
           <div className="flex items-center gap-3">
             <NavLink to={ROUTES.PROTECTED.DASHBOARD} className="flex items-center gap-3">
               <div className="w-10 h-10 rounded-xl overflow-hidden shadow-lg shadow-blue-500/20 hover:shadow-blue-500/30 transition-all duration-300 hover:scale-105">
-                <img src="/logo.png" alt="Logo" className="w-full h-full object-cover" />
+                <img src="./logo.png" alt="Logo" className="w-full h-full object-cover" />
               </div>
               <div>
                 <span className="text-lg font-bold text-white tracking-tight">Format-Boy.CAM</span>

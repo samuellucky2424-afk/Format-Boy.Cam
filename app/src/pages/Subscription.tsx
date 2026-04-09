@@ -5,12 +5,14 @@ import { toast } from 'sonner';
 
 import { Button } from '@/components/ui/button';
 import { useAuth } from '@/context/AuthContext';
+import { useApp } from '@/context/AppContext';
 import { apiFetch } from '@/lib/api-client';
+import { PaymentModal } from '@/components/PaymentModal';
 const CREDIT_PLANS = [
-  { credits: 500, priceUSD: 10 },
-  { credits: 1000, priceUSD: 20 },
-  { credits: 2000, priceUSD: 40 },
-  { credits: 5000, priceUSD: 100 },
+  { credits: 500, priceNGN: 18500 },
+  { credits: 1000, priceNGN: 37000 },
+  { credits: 2000, priceNGN: 74000 },
+  { credits: 5000, priceNGN: 185000 },
 ];
 
 function formatTime(credits: number): string {
@@ -28,8 +30,10 @@ function formatTime(credits: number): string {
 function Subscription() {
   const navigate = useNavigate();
   const { user } = useAuth();
+  const { addCredits } = useApp();
   const [selectedPlan, setSelectedPlan] = useState<typeof CREDIT_PLANS[0] | null>(null);
   const [isProcessing, setIsProcessing] = useState(false);
+  const [isPaymentModalOpen, setIsPaymentModalOpen] = useState(false);
   const [ngnRate, setNgnRate] = useState<number>(1500);
   const [isLoadingRate, setIsLoadingRate] = useState(true);
   const [isFallbackRate, setIsFallbackRate] = useState(false);
@@ -75,33 +79,64 @@ function Subscription() {
       return;
     }
 
-    const amountNGN = Math.round(selectedPlan.priceUSD * ngnRate);
+    const amountNGN = selectedPlan.priceNGN;
 
     setIsProcessing(true);
 
     try {
-      const res = await apiFetch('/payment/flutterwave-init', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          userId: user.id,
+      const tx_ref = `FMT-${Date.now()}-${user.id}`;
+      if (typeof (window as any).FlutterwaveCheckout === "function") {
+        (window as any).FlutterwaveCheckout({
+          public_key: import.meta.env.VITE_FLUTTERWAVE_PUBLIC_KEY,
+          tx_ref: tx_ref,
           amount: amountNGN,
-          email: user.email,
-          credits: selectedPlan.credits,
-        }),
-      });
-
-      const data = await res.json();
-
-      if (data.status === 'success' && data.payment_link) {
-        window.location.href = data.payment_link;
+          currency: "NGN",
+          payment_options: "card, mobilemoneyghana, ussd",
+          customer: { email: user.email },
+          customizations: {
+            title: "Format-Boy Cam - Credits",
+            description: `Buy ${selectedPlan.credits.toLocaleString()} credits for ₦${amountNGN.toLocaleString()}`,
+            logo: "/favicon.png",
+          },
+          callback: async function (data: any) {
+            setIsProcessing(true);
+            try {
+              const res = await apiFetch('/payment/flutterwave-verify', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                  transaction_id: data.transaction_id,
+                  tx_ref: tx_ref,
+                }),
+              });
+              const verifyData = await res.json();
+              if (verifyData.status === 'success') {
+                toast.success(`Payment verified! ${verifyData.creditsAdded?.toLocaleString() || 0} credits added.`);
+                if (typeof verifyData.creditsAdded === 'number') {
+                  addCredits(verifyData.creditsAdded);
+                }
+                setSelectedPlan(null);
+              } else {
+                toast.error(verifyData.message || 'Payment verification failed');
+              }
+            } catch (error) {
+              console.error('Verification error:', error);
+              toast.error('Unable to verify payment automatically.');
+            } finally {
+              setIsProcessing(false);
+            }
+          },
+          onclose: function () {
+            setIsProcessing(false);
+          }
+        });
       } else {
-        toast.error(data.message || 'Failed to initialize payment');
+        toast.error('Flutterwave SDK not loaded. Please refresh the page.');
+        setIsProcessing(false);
       }
     } catch (error) {
       console.error('Payment init error:', error);
       toast.error('Unable to start payment. Please try again.');
-    } finally {
       setIsProcessing(false);
     }
   };
@@ -131,7 +166,7 @@ function Subscription() {
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
             {CREDIT_PLANS.map((plan) => {
               const isSelected = selectedPlan?.credits === plan.credits;
-              const priceNGN = hasLiveRate ? getPriceNGN(plan.priceUSD) : null;
+              const priceNGN = plan.priceNGN;
 
               return (
                 <button
@@ -157,10 +192,7 @@ function Subscription() {
                     </div>
                   </div>
                   <div className="flex items-center gap-2">
-                    <span className="text-xl font-bold text-white">${plan.priceUSD}</span>
-                    {priceNGN !== null && (
-                      <span className="text-sm text-[#71717a]">(NGN {priceNGN.toLocaleString()})</span>
-                    )}
+                    <span className="text-xl font-bold text-white">₦{priceNGN.toLocaleString()}</span>
                   </div>
                 </button>
               );
@@ -180,26 +212,6 @@ function Subscription() {
 
         <div className="text-center">
           <p className="text-sm text-[#71717a] mb-4">All purchases are one-time. No subscriptions or hidden fees.</p>
-          {hasLiveRate && (
-            <p className="text-xs text-[#52525b]">
-              Exchange rate: 1 USD = NGN {ngnRate.toLocaleString()}
-            </p>
-          )}
-          {isLoadingRate && (
-            <p className="text-xs text-[#52525b]">
-              Fetching live exchange rate...
-            </p>
-          )}
-          {isFallbackRate && (
-            <p className="text-xs text-amber-400 mt-2">
-              Showing fallback pricing. Configure `EXCHANGE_RATE_API_KEY` in the active API environment for live USD to NGN rates.
-            </p>
-          )}
-          {!isFallbackRate && rateUpdatedAt && (
-            <p className="text-xs text-[#52525b] mt-2">
-              Last updated: {new Date(rateUpdatedAt).toLocaleString()}
-            </p>
-          )}
         </div>
       </div>
 
@@ -209,15 +221,7 @@ function Subscription() {
             <div className="flex flex-col">
               <span className="text-sm text-[#a1a1aa] font-medium">Selected Plan</span>
               <span className="text-xl font-bold text-white tracking-tight">
-                {selectedPlan.credits.toLocaleString()} Credits <span className="text-blue-500 font-normal mx-1">/</span> ${selectedPlan.priceUSD}
-                {hasLiveRate && (
-                  <>
-                    {' '}
-                    <span className="text-[#71717a] font-normal">
-                      (NGN {getPriceNGN(selectedPlan.priceUSD).toLocaleString()})
-                    </span>
-                  </>
-                )}
+                {selectedPlan.credits.toLocaleString()} Credits <span className="text-blue-500 font-normal mx-1">/</span> ₦{selectedPlan.priceNGN.toLocaleString()}
               </span>
               <span className="text-xs text-[#71717a] mt-1">{formatTime(selectedPlan.credits)} estimated time</span>
             </div>
