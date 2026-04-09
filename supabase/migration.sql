@@ -1,4 +1,4 @@
--- Morphly AI Streaming Platform - Complete Database Schema
+-- Format-Boy Cam - Credit Billing Schema
 
 -- Enable UUID extension
 CREATE EXTENSION IF NOT EXISTS "uuid-ossp";
@@ -15,13 +15,12 @@ CREATE TABLE IF NOT EXISTS public.users (
 );
 
 -- ============================================
--- WALLETS TABLE
+-- CREDITS TABLE
 -- ============================================
 CREATE TABLE IF NOT EXISTS public.wallets (
   id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
   user_id UUID NOT NULL REFERENCES public.users(id) ON DELETE CASCADE,
-  balance NUMERIC(12, 2) DEFAULT 0 CHECK (balance >= 0),
-  currency TEXT DEFAULT 'USD',
+  credits INTEGER DEFAULT 0 CHECK (credits >= 0),
   created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
   updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
   UNIQUE(user_id)
@@ -34,7 +33,8 @@ CREATE TABLE IF NOT EXISTS public.transactions (
   id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
   user_id UUID NOT NULL REFERENCES public.users(id) ON DELETE CASCADE,
   wallet_id UUID REFERENCES public.wallets(id) ON DELETE SET NULL,
-  amount NUMERIC(12, 2) NOT NULL CHECK (amount != 0),
+  amount NUMERIC(12, 2) DEFAULT 0,
+  credits INTEGER DEFAULT 0 CHECK (credits >= 0),
   type TEXT NOT NULL CHECK (type IN ('credit', 'debit')),
   status TEXT NOT NULL DEFAULT 'pending' CHECK (status IN ('pending', 'success', 'failed', 'refunded')),
   reference TEXT,
@@ -54,10 +54,11 @@ CREATE TABLE IF NOT EXISTS public.sessions (
   start_time TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
   end_time TIMESTAMP WITH TIME ZONE,
   seconds_used INTEGER DEFAULT 0,
-  cost_per_second NUMERIC(10, 6) DEFAULT 0.0001,
+  credits_per_second INTEGER DEFAULT 2,
+  credits_used INTEGER DEFAULT 0,
   cost NUMERIC(12, 2) DEFAULT 0,
   status TEXT DEFAULT 'active' CHECK (status IN ('active', 'ended', 'interrupted')),
-  model TEXT DEFAULT 'morphly-ai-v1',
+  model TEXT DEFAULT 'format-boy-cam-v1',
   metadata JSONB DEFAULT '{}',
   created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
 );
@@ -142,12 +143,12 @@ CREATE POLICY "Users can insert own profile"
   ON public.users FOR INSERT
   WITH CHECK (auth.uid() = id);
 
--- WALLETS POLICIES
-CREATE POLICY "Users can view own wallet"
+-- CREDITS POLICIES
+CREATE POLICY "Users can view own credits"
   ON public.wallets FOR SELECT
   USING (auth.uid() = user_id);
 
-CREATE POLICY "Users can view own wallet (join)"
+CREATE POLICY "Users can view own credits (join)"
   ON public.wallets FOR ALL
   USING (auth.uid() = user_id);
 
@@ -207,7 +208,7 @@ BEGIN
   VALUES (NEW.id, NEW.email)
   ON CONFLICT (id) DO NOTHING;
   
-  INSERT INTO public.wallets (user_id, balance)
+  INSERT INTO public.wallets (user_id, credits)
   VALUES (NEW.id, 0)
   ON CONFLICT (user_id) DO NOTHING;
   
@@ -246,26 +247,26 @@ CREATE TRIGGER update_plans_updated_at
   BEFORE UPDATE ON public.plans
   FOR EACH ROW EXECUTE FUNCTION public.update_updated_at();
 
--- Function to deduct credits from wallet
+-- Function to deduct credits from the credit ledger
 CREATE OR REPLACE FUNCTION public.deduct_from_wallet(
   p_user_id UUID,
   p_amount NUMERIC
 )
 RETURNS BOOLEAN AS $$
 DECLARE
-  v_current_balance NUMERIC;
+  v_current_credits INTEGER;
 BEGIN
-  SELECT balance INTO v_current_balance
+  SELECT credits INTO v_current_credits
   FROM public.wallets
   WHERE user_id = p_user_id
   FOR UPDATE;
 
-  IF v_current_balance IS NULL OR v_current_balance < p_amount THEN
+  IF v_current_credits IS NULL OR v_current_credits < p_amount THEN
     RETURN FALSE;
   END IF;
 
   UPDATE public.wallets
-  SET balance = balance - p_amount
+  SET credits = credits - p_amount
   WHERE user_id = p_user_id;
 
   INSERT INTO public.transactions (user_id, wallet_id, amount, type, status, description)
@@ -275,14 +276,14 @@ BEGIN
     -p_amount,
     'debit',
     'success',
-    'Session cost deduction'
+    'Stream credit deduction'
   );
 
   RETURN TRUE;
 END;
 $$ LANGUAGE plpgsql SECURITY DEFINER;
 
--- Function to add credits to wallet
+-- Function to add credits to the credit ledger
 CREATE OR REPLACE FUNCTION public.add_to_wallet(
   p_user_id UUID,
   p_amount NUMERIC,
@@ -301,7 +302,7 @@ BEGIN
   END IF;
 
   UPDATE public.wallets
-  SET balance = balance + p_amount
+  SET credits = credits + p_amount
   WHERE user_id = p_user_id;
 
   INSERT INTO public.transactions (user_id, wallet_id, amount, type, status, reference, description)
@@ -312,7 +313,7 @@ BEGIN
     'credit',
     'success',
     p_reference,
-    'Wallet top-up'
+    'Credit top-up'
   );
 
   RETURN TRUE;

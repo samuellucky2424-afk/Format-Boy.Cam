@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react';
 import { Link } from 'react-router-dom';
-import { Video, Loader2, Eye, EyeOff } from 'lucide-react';
+import { Loader2, Eye, EyeOff } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
@@ -47,10 +47,10 @@ function Login() {
     <div className="min-h-screen bg-[#0f0f10] flex items-center justify-center p-4">
       <div className="w-full max-w-[400px]">
         <div className="flex items-center justify-center gap-3 mb-8">
-          <div className="w-10 h-10 rounded-lg bg-[#1a1a1b] flex items-center justify-center">
-            <Video className="w-5 h-5 text-white" />
+          <div className="w-10 h-10 rounded-lg bg-[#1a1a1b] flex items-center justify-center overflow-hidden">
+            <img src="/logo.png" alt="Logo" className="w-full h-full object-cover" />
           </div>
-          <span className="text-xl font-semibold text-white tracking-tight">Morphly</span>
+          <span className="text-xl font-semibold text-white tracking-tight">Format-Boy.CAM</span>
         </div>
 
         <Card className="bg-[#18181b] border-[#27272a]">

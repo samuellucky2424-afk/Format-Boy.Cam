@@ -24,7 +24,7 @@ export default async function handler(req, res) {
       });
     }
 
-    const apiKey = process.env.VITE_EXCHANGE_RATE_API_KEY || process.env.EXCHANGE_RATE_API_KEY;
+    const apiKey = process.env.EXCHANGE_RATE_API_KEY;
 
     if (!apiKey) {
       return res.json({

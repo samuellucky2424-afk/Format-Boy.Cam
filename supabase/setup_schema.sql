@@ -8,11 +8,11 @@ CREATE TABLE IF NOT EXISTS public.users (
   created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
 );
 
--- 2. WALLETS TABLE
+-- 2. CREDITS TABLE
 CREATE TABLE IF NOT EXISTS public.wallets (
   id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
   user_id UUID NOT NULL REFERENCES public.users(id) ON DELETE CASCADE,
-  balance NUMERIC DEFAULT 0 CHECK (balance >= 0),
+  credits INTEGER DEFAULT 0 CHECK (credits >= 0),
   created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
   UNIQUE(user_id)
 );
@@ -21,10 +21,14 @@ CREATE TABLE IF NOT EXISTS public.wallets (
 CREATE TABLE IF NOT EXISTS public.transactions (
   id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
   user_id UUID NOT NULL REFERENCES public.users(id) ON DELETE CASCADE,
-  amount NUMERIC NOT NULL,
+  wallet_id UUID REFERENCES public.wallets(id) ON DELETE SET NULL,
+  amount NUMERIC DEFAULT 0,
+  credits INTEGER DEFAULT 0 CHECK (credits >= 0),
   type TEXT NOT NULL CHECK (type IN ('credit', 'debit')),
   status TEXT NOT NULL DEFAULT 'pending' CHECK (status IN ('pending', 'success', 'failed')),
   reference TEXT,
+  description TEXT,
+  metadata JSONB DEFAULT '{}',
   created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
 );
 
@@ -32,9 +36,12 @@ CREATE TABLE IF NOT EXISTS public.transactions (
 CREATE TABLE IF NOT EXISTS public.sessions (
   id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
   user_id UUID NOT NULL REFERENCES public.users(id) ON DELETE CASCADE,
+  wallet_id UUID REFERENCES public.wallets(id) ON DELETE SET NULL,
   start_time TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
   end_time TIMESTAMP WITH TIME ZONE,
   seconds_used INTEGER DEFAULT 0,
+  credits_used INTEGER DEFAULT 0,
+  credits_per_second INTEGER DEFAULT 2,
   cost NUMERIC DEFAULT 0,
   status TEXT DEFAULT 'active' CHECK (status IN ('active', 'ended')),
   created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
@@ -80,8 +87,8 @@ CREATE POLICY "Users can only see and update their own profile"
   ON public.users FOR ALL
   USING (auth.uid() = id);
 
--- Wallets Policy
-CREATE POLICY "Users can only access their own wallet"
+-- Credits Policy
+CREATE POLICY "Users can only access their own credits"
   ON public.wallets FOR ALL
   USING (auth.uid() = user_id);
 
@@ -109,21 +116,21 @@ CREATE POLICY "Authenticated users can view plans"
 -- TRIGGERS & FUNCTIONS
 -- ============================================
 
--- Function to handle new user account creation and automated wallet creation
+-- Function to handle new user account creation and automated credits creation
 CREATE OR REPLACE FUNCTION public.handle_new_user()
 RETURNS TRIGGER AS $$
 BEGIN
   INSERT INTO public.users (id, email)
   VALUES (NEW.id, NEW.email);
 
-  INSERT INTO public.wallets (user_id, balance)
+  INSERT INTO public.wallets (user_id, credits)
   VALUES (NEW.id, 0);
 
   RETURN NEW;
 END;
 $$ LANGUAGE plpgsql SECURITY DEFINER;
 
--- Trigger to automatically wire up users/wallets on sign up
+-- Trigger to automatically wire up users/credits on sign up
 DROP TRIGGER IF EXISTS on_auth_user_created ON auth.users;
 CREATE TRIGGER on_auth_user_created
   AFTER INSERT ON auth.users

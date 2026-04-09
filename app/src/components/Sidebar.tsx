@@ -1,8 +1,8 @@
+import type { ComponentType } from 'react';
 import { NavLink, useNavigate } from 'react-router-dom';
 import { 
-  Video, 
   LayoutDashboard, 
-  Wallet, 
+  Coins, 
   CreditCard, 
   X,
   LogOut,
@@ -18,13 +18,13 @@ import { ROUTES } from '@/lib/routes';
 interface NavItem {
   path: string;
   label: string;
-  icon: React.ComponentType<{ className?: string }>;
+  icon: ComponentType<{ className?: string }>;
 }
 
 const navItems: NavItem[] = [
   { path: ROUTES.PROTECTED.DASHBOARD, label: 'Dashboard', icon: LayoutDashboard },
-  { path: ROUTES.PROTECTED.WALLET, label: 'Wallet', icon: Wallet },
-  { path: ROUTES.PROTECTED.SUBSCRIPTION, label: 'Subscription', icon: CreditCard },
+  { path: ROUTES.PROTECTED.WALLET, label: 'Credits', icon: Coins },
+  { path: ROUTES.PROTECTED.SUBSCRIPTION, label: 'Buy Credits', icon: CreditCard },
   { path: ROUTES.PROTECTED.SETTINGS, label: 'Settings', icon: Settings },
 ];
 
@@ -69,11 +69,11 @@ export default function Sidebar() {
       >
         <div className="h-20 flex items-center justify-between px-5 border-b border-[#18181b]">
           <div className="flex items-center gap-3">
-            <div className="w-10 h-10 rounded-xl bg-gradient-to-br from-blue-500 to-blue-600 flex items-center justify-center shadow-lg shadow-blue-500/20">
-              <Video className="w-4 h-4 text-white" />
+            <div className="w-10 h-10 rounded-xl overflow-hidden shadow-lg shadow-blue-500/20">
+              <img src="/logo.png" alt="Logo" className="w-full h-full object-cover" />
             </div>
             <div>
-              <span className="text-lg font-bold text-white tracking-tight">Morphly</span>
+              <span className="text-lg font-bold text-white tracking-tight">Format-Boy.CAM</span>
               <p className="text-[10px] text-[#71717a] -mt-0.5 tracking-wide uppercase font-semibold">AI Streaming</p>
             </div>
           </div>

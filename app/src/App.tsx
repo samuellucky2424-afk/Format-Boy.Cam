@@ -16,6 +16,7 @@ const Wallet = lazy(() => import('@/pages/Wallet'));
 const Subscription = lazy(() => import('@/pages/Subscription'));
 const Settings = lazy(() => import('@/pages/Settings'));
 const NotFound = lazy(() => import('@/pages/NotFound'));
+const PaymentSuccess = lazy(() => import('@/pages/PaymentSuccess'));
 
 function App() {
   return (
@@ -45,6 +46,14 @@ function App() {
                   <Route
                     path={ROUTES.PROTECTED.SUBSCRIPTION}
                     element={<Subscription />}
+                  />
+                  <Route
+                    path={ROUTES.PUBLIC.PAYMENT_SUCCESS}
+                    element={<PaymentSuccess />}
+                  />
+                  <Route
+                    path="/wallet"
+                    element={<Navigate to={ROUTES.PROTECTED.WALLET} replace />}
                   />
                   <Route
                     path="/"

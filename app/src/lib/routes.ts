@@ -2,10 +2,11 @@ export const ROUTES = {
   PUBLIC: {
     LOGIN: '/login',
     SIGNUP: '/signup',
+    PAYMENT_SUCCESS: '/payment-success',
   },
   PROTECTED: {
     DASHBOARD: '/dashboard',
-    WALLET: '/wallet',
+    WALLET: '/credits',
     SUBSCRIPTION: '/subscription',
     SETTINGS: '/settings',
   },

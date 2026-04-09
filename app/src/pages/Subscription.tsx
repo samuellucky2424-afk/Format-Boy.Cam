@@ -4,16 +4,8 @@ import { useNavigate } from 'react-router-dom';
 import { toast } from 'sonner';
 
 import { Button } from '@/components/ui/button';
-import { useApp } from '@/context/AppContext';
 import { useAuth } from '@/context/AuthContext';
 import { apiFetch } from '@/lib/api-client';
-
-declare global {
-  interface Window {
-    PaystackPop: any;
-  }
-}
-
 const CREDIT_PLANS = [
   { credits: 500, priceUSD: 10 },
   { credits: 1000, priceUSD: 20 },
@@ -36,7 +28,6 @@ function formatTime(credits: number): string {
 function Subscription() {
   const navigate = useNavigate();
   const { user } = useAuth();
-  const { addCredits } = useApp();
   const [selectedPlan, setSelectedPlan] = useState<typeof CREDIT_PLANS[0] | null>(null);
   const [isProcessing, setIsProcessing] = useState(false);
   const [ngnRate, setNgnRate] = useState<number>(1500);
@@ -75,7 +66,7 @@ function Subscription() {
     setSelectedPlan(plan);
   };
 
-  const handleProceedToPayment = () => {
+  const handleProceedToPayment = async () => {
     if (!selectedPlan) return;
 
     if (!user) {
@@ -84,70 +75,33 @@ function Subscription() {
       return;
     }
 
-    if (!window.PaystackPop) {
-      toast.error('Payment gateway not loaded. Please refresh the page.');
-      return;
-    }
-
-    const paystackPublicKey = import.meta.env.VITE_PAYSTACK_PUBLIC_KEY || 'pk_test_mock_public';
-    const amountNGN = Math.round(selectedPlan.priceUSD * ngnRate * 100);
+    const amountNGN = Math.round(selectedPlan.priceUSD * ngnRate);
 
     setIsProcessing(true);
 
     try {
-      const handler = window.PaystackPop.setup({
-        key: paystackPublicKey,
-        email: user.email,
-        amount: amountNGN,
-        currency: 'NGN',
-        ref: `ref_${Math.floor((Math.random() * 1000000000) + 1)}`,
-        callback: function (response: any) {
-          (async () => {
-            try {
-              const res = await apiFetch('/verify-payment', {
-                method: 'POST',
-                headers: {
-                  'Content-Type': 'application/json',
-                },
-                body: JSON.stringify({
-                  reference: response.reference,
-                  userId: user?.id,
-                  credits: selectedPlan.credits,
-                  priceUSD: selectedPlan.priceUSD,
-                }),
-              });
-
-              if (!res.ok) {
-                throw new Error(`Server returned ${res.status}`);
-              }
-
-              const data = await res.json();
-              if (data.status === 'success') {
-                toast.success(`Successfully purchased ${selectedPlan.credits} credits!`);
-                addCredits(selectedPlan.credits);
-                navigate('/wallet');
-              } else {
-                toast.error(data.message || 'Payment verification failed');
-              }
-            } catch (error) {
-              console.error(error);
-              toast.error('Error verifying payment. However, in mock mode we will credit anyway.');
-              addCredits(selectedPlan.credits);
-            } finally {
-              setIsProcessing(false);
-            }
-          })();
-        },
-        onClose: function () {
-          toast.info('Payment cancelled');
-          setIsProcessing(false);
-        },
+      const res = await apiFetch('/payment/flutterwave-init', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          userId: user.id,
+          amount: amountNGN,
+          email: user.email,
+          credits: selectedPlan.credits,
+        }),
       });
 
-      handler.openIframe();
+      const data = await res.json();
+
+      if (data.status === 'success' && data.payment_link) {
+        window.location.href = data.payment_link;
+      } else {
+        toast.error(data.message || 'Failed to initialize payment');
+      }
     } catch (error) {
-      console.error(error);
-      toast.error('Failed to initialize payment gateway');
+      console.error('Payment init error:', error);
+      toast.error('Unable to start payment. Please try again.');
+    } finally {
       setIsProcessing(false);
     }
   };

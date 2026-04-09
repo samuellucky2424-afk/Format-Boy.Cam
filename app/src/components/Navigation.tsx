@@ -1,5 +1,6 @@
+import type { ReactNode, ComponentType } from 'react';
 import { NavLink } from 'react-router-dom';
-import { Video, ChevronDown, LogOut, CreditCard, Wallet, LayoutDashboard, Settings } from 'lucide-react';
+import { ChevronDown, LogOut, CreditCard, Coins, LayoutDashboard, Settings } from 'lucide-react';
 import { Avatar, AvatarFallback } from '@/components/ui/avatar';
 import { Separator } from '@/components/ui/separator';
 import { useAuth } from '@/context/AuthContext';
@@ -7,23 +8,23 @@ import { useApp } from '@/context/AppContext';
 import { ROUTES } from '@/lib/routes';
 
 interface NavigationProps {
-  children: React.ReactNode;
+  children: ReactNode;
 }
 
 interface NavItem {
   path: string;
   label: string;
-  icon: React.ComponentType<{ className?: string }>;
+  icon: ComponentType<{ className?: string }>;
 }
 
 export function Navigation({ children }: NavigationProps) {
   const { user, logout } = useAuth();
-  const { balance, sessionStatus } = useApp();
+  const { credits, sessionStatus } = useApp();
 
   const navItems: NavItem[] = [
     { path: ROUTES.PROTECTED.DASHBOARD, label: 'Dashboard', icon: LayoutDashboard },
-    { path: ROUTES.PROTECTED.WALLET, label: 'Wallet', icon: Wallet },
-    { path: ROUTES.PROTECTED.SUBSCRIPTION, label: 'Subscription', icon: CreditCard },
+    { path: ROUTES.PROTECTED.WALLET, label: 'Credits', icon: Coins },
+    { path: ROUTES.PROTECTED.SUBSCRIPTION, label: 'Buy Credits', icon: CreditCard },
     { path: ROUTES.PROTECTED.SETTINGS, label: 'Settings', icon: Settings },
   ];
 
@@ -50,11 +51,11 @@ export function Navigation({ children }: NavigationProps) {
         <div className="h-full max-w-[1600px] mx-auto px-6 flex items-center justify-between">
           <div className="flex items-center gap-3">
             <NavLink to={ROUTES.PROTECTED.DASHBOARD} className="flex items-center gap-3">
-              <div className="w-10 h-10 rounded-xl bg-gradient-to-br from-blue-500 to-blue-600 flex items-center justify-center shadow-lg shadow-blue-500/20 hover:shadow-blue-500/30 transition-all duration-300 hover:scale-105">
-                <Video className="w-4 h-4 text-white" />
+              <div className="w-10 h-10 rounded-xl overflow-hidden shadow-lg shadow-blue-500/20 hover:shadow-blue-500/30 transition-all duration-300 hover:scale-105">
+                <img src="/logo.png" alt="Logo" className="w-full h-full object-cover" />
               </div>
               <div>
-                <span className="text-lg font-bold text-white tracking-tight">Morphly</span>
+                <span className="text-lg font-bold text-white tracking-tight">Format-Boy.CAM</span>
                 <p className="text-[10px] text-[#71717a] -mt-0.5 tracking-wide">AI Streaming Platform</p>
               </div>
             </NavLink>
@@ -95,8 +96,8 @@ export function Navigation({ children }: NavigationProps) {
                 }`
               }
             >
-              <Wallet className="w-3.5 h-3.5 text-[#a1a1aa]" />
-              <span className="text-sm font-bold text-white tracking-tight">₦{Math.round(balance).toLocaleString()}</span>
+              <Coins className="w-3.5 h-3.5 text-[#60a5fa]" />
+              <span className="text-sm font-bold text-white tracking-tight">{Math.round(credits).toLocaleString()}</span>
               <span className="px-2 py-0.5 text-[9px] font-bold text-blue-400 bg-blue-500/10 rounded-full tracking-wide border border-blue-500/20">CREDITS</span>
             </NavLink>
             <Separator orientation="vertical" className="h-6 bg-[#27272a]" />

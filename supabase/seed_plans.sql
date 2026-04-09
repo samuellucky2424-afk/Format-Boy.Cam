@@ -1,9 +1,9 @@
--- Seed the plans table with Morphly subscription plans
+-- Seed the plans table with Format-Boy Cam credit packs
 INSERT INTO public.plans (name, price, credits, duration_minutes)
 VALUES
-  ('Starter', 8000, 2, 2),
-  ('Standard', 20000, 5, 5),
-  ('Pro', 35000, 10, 10)
+  ('Starter', 8000, 500, 4),
+  ('Standard', 20000, 1000, 8),
+  ('Pro', 40000, 2000, 16)
 ON CONFLICT (name) DO UPDATE SET
   price = EXCLUDED.price,
   credits = EXCLUDED.credits,

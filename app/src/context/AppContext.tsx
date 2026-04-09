@@ -13,10 +13,6 @@ export interface Transaction {
 }
 
 interface AppContextType {
-  balance: number;
-  setBalance: (balance: number) => void;
-  addBalance: (amount: number) => void;
-  deductBalance: (amount: number) => void;
   credits: number;
   setCredits: (credits: number) => void;
   addCredits: (credits: number) => void;
@@ -42,12 +38,10 @@ export interface Notification {
 
 const AppContext = createContext<AppContextType | undefined>(undefined);
 
-const BALANCE_KEY = 'morphly_balance';
-const TRANSACTIONS_KEY = 'morphly_transactions';
+const TRANSACTIONS_KEY = 'format_boy_transactions';
 
 export function AppProvider({ children }: { children: ReactNode }) {
   const { user } = useAuth();
-  const [balance, setBalanceState] = useState(0);
   const [credits, setCreditsState] = useState(0);
   const [sessionStatus, setSessionStatus] = useState<'LIVE' | 'IDLE'>('IDLE');
   const [isLoading, setLoading] = useState(false);
@@ -56,7 +50,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
 
   useEffect(() => {
     if (user?.id) {
-      apiFetch(`/wallet?userId=${user.id}`)
+      apiFetch(`/credits?userId=${user.id}`)
         .then(async res => {
           if (!res.ok) {
             throw new Error(`API returned ${res.status}`);
@@ -69,64 +63,15 @@ export function AppProvider({ children }: { children: ReactNode }) {
           }
         })
         .then(data => {
-          if (data && data.balance !== undefined) {
-            setBalanceState(data.balance);
-            setCreditsState(data.credits ?? 0);
+          if (data && data.credits !== undefined) {
+            setCreditsState(data.credits);
             setTransactions(data.transactions || []);
           }
         })
-        .catch(err => console.warn('Failed to sync wallet (backend might need restart):', err));
+        .catch(err => console.warn('Failed to sync credits from backend:', err));
     }
   }, [user?.id]);
 
-  const setBalance = useCallback((newBalance: number) => {
-    setBalanceState(newBalance);
-    localStorage.setItem(BALANCE_KEY, newBalance.toString());
-  }, []);
-
-  const addBalance = useCallback((amount: number) => {
-    const transaction: Transaction = {
-      id: `tx_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
-      type: 'credit',
-      amount,
-      description: 'Balance added',
-      timestamp: new Date().toISOString(),
-    };
-    
-    setBalanceState(prev => {
-      const newBalance = prev + amount;
-      localStorage.setItem(BALANCE_KEY, newBalance.toString());
-      return newBalance;
-    });
-    
-    setTransactions(prev => {
-      const updated = [transaction, ...prev].slice(0, 50);
-      localStorage.setItem(TRANSACTIONS_KEY, JSON.stringify(updated));
-      return updated;
-    });
-  }, []);
-
-  const deductBalance = useCallback((amount: number) => {
-    const transaction: Transaction = {
-      id: `tx_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
-      type: 'debit',
-      amount,
-      description: 'Session usage',
-      timestamp: new Date().toISOString(),
-    };
-    
-    setBalanceState(prev => {
-      const newBalance = Math.max(0, prev - amount);
-      localStorage.setItem(BALANCE_KEY, newBalance.toString());
-      return newBalance;
-    });
-    
-    setTransactions(prev => {
-      const updated = [transaction, ...prev].slice(0, 50);
-      localStorage.setItem(TRANSACTIONS_KEY, JSON.stringify(updated));
-      return updated;
-    });
-  }, []);
 
   const setCredits = useCallback((newCredits: number) => {
     setCreditsState(Math.max(0, newCredits || 0));
@@ -206,10 +151,6 @@ export function AppProvider({ children }: { children: ReactNode }) {
   }, []);
 
   const value = useMemo(() => ({
-    balance,
-    setBalance,
-    addBalance,
-    deductBalance,
     credits,
     setCredits,
     addCredits,
@@ -223,7 +164,8 @@ export function AppProvider({ children }: { children: ReactNode }) {
     notifications,
     addNotification,
     clearNotifications,
-  }), [balance, setBalance, addBalance, deductBalance, credits, setCredits, addCredits, deductCredits, sessionStatus, isLoading, transactions, addTransaction, notifications, addNotification, clearNotifications]);
+  }), [credits, setCredits, addCredits, deductCredits, sessionStatus, isLoading, transactions, addTransaction, notifications, addNotification, clearNotifications]);
+
 
   return (
     <AppContext.Provider value={value}>

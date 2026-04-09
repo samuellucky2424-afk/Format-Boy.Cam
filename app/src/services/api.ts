@@ -121,5 +121,5 @@ export const dataApi = {
   
   endSession: () => api.post('/session/end'),
   
-  deductBalance: (amount: number) => api.post('/session/deduct', { amount }),
+  deductCredits: (amount: number) => api.post('/session/deduct', { amount }),
 };

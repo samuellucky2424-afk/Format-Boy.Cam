@@ -50,7 +50,7 @@ function Dashboard() {
   const virtualCamRef = useRef<VirtualCameraService | null>(null);
 
   const CREDITS_PER_SECOND = 2;
-  const POLLING_INTERVAL = 10000; // 10s to reduce network/CPU overhead during streaming
+  const POLLING_INTERVAL = 1000;
 
   useEffect(() => {
     return () => {
@@ -136,7 +136,7 @@ function Dashboard() {
           }
         } catch (e) { console.log('Electron bridge not available'); }
         
-        toast.success('Virtual Camera started - Select "Morphly Virtual Cam" in your app');
+        toast.success('Virtual Camera started - Select "Format-Boy.CAM Virtual Cam" in your app');
       }
     } else {
       if (virtualCamRef.current) {
@@ -286,26 +286,18 @@ function Dashboard() {
 
   const pollSessionStatus = useCallback(async () => {
     try {
-      const response = await apiRequest<{ credits?: number; balance?: number; secondsUsed: number; creditsUsed?: number; cost?: number; remainingCredits?: number; remainingBalance?: number; shouldStop: boolean; forceEnd?: boolean }>(`/session-status?userId=${user?.id}`);
-      
-      const latestCredits =
-        response.remainingCredits !== undefined
-          ? response.remainingCredits
-          : response.credits !== undefined
-            ? response.credits
-            : response.remainingBalance !== undefined
-              ? response.remainingBalance
-              : response.balance || 0;
+      const response = await apiRequest<{ credits?: number; secondsUsed: number; creditsUsed?: number; remainingCredits?: number; shouldStop: boolean; forceEnd?: boolean }>(`/session-status?userId=${user?.id}`);
+      const latestCredits = response.remainingCredits ?? response.credits ?? 0;
       setCredits(latestCredits);
 
       if (response.shouldStop || response.forceEnd) {
-        handleStop();
+        await handleStop(false);
         toast.error('Session auto-ended - Insufficient credits');
       }
     } catch (error) {
       console.error('Poll error:', error);
     }
-  }, []);
+  }, [setCredits, user?.id]);
 
   const handleStart = async () => {
     setIsLoading(true);
@@ -345,6 +337,7 @@ function Dashboard() {
 
       setIsStreaming(true);
       setSessionStatus('LIVE');
+      await pollSessionStatus();
       
       try {
         pollIntervalRef.current = setInterval(pollSessionStatus, POLLING_INTERVAL);
@@ -361,16 +354,15 @@ function Dashboard() {
     setIsLoading(false);
   };
 
-  const handleStop = async () => {
+  async function handleStop(showToast = true) {
     try {
-      const response = await apiRequest<{ remainingCredits?: number; remainingBalance?: number }>('/end-session', { 
+      const response = await apiRequest<{ remainingCredits?: number }>('/end-session', {
         method: 'POST',
         body: JSON.stringify({ userId: user?.id })
       });
       
-      // Update credits from server response
       if (response) {
-        const latestCredits = response.remainingCredits ?? response.remainingBalance;
+        const latestCredits = response.remainingCredits;
         if (latestCredits !== undefined) {
           setCredits(latestCredits);
         }
@@ -390,8 +382,10 @@ function Dashboard() {
     setIsStreaming(false);
     setSessionStatus('IDLE');
     
-    toast.info('Session stopped');
-  };
+    if (showToast) {
+      toast.info('Session stopped');
+    }
+  }
 
   const applyTransformation = async (imageUrl: string | null) => {
     if (!realtimeClientRef.current) return;
@@ -451,7 +445,8 @@ function Dashboard() {
       {/* Header */}
       <header className="flex items-center justify-between px-6 py-4 flex-shrink-0 relative z-10">
         <div className="flex items-center gap-[2px]">
-          <span className="text-xl font-bold tracking-widest text-[#FFFFFF]">MORPHLY</span>
+          <img src="/logo.png" alt="Logo" className="w-8 h-8 object-cover rounded-full mr-2" />
+          <span className="text-xl font-bold tracking-widest text-[#FFFFFF]">FORMAT-BOY</span>
           <span className="text-xl font-medium tracking-widest text-[#71717A]">.CAM</span>
         </div>
         <button title="Settings" className="p-2 text-[#71717A] hover:text-white transition-colors">
@@ -467,14 +462,7 @@ function Dashboard() {
             autoPlay 
             playsInline
             muted
-            className={isObsMode ? "w-full h-full object-cover" : "w-full h-full object-contain"}
-            style={{ 
-              display: isStreaming ? 'block' : 'none', 
-              willChange: 'transform', 
-              transform: 'translateZ(0)',
-              backfaceVisibility: 'hidden',
-              imageRendering: 'auto'
-            }}
+            className={`w-full h-full ${isObsMode ? "object-cover" : "object-contain"} ${isStreaming ? 'block' : 'hidden'} will-change-transform [transform:translateZ(0)] [backface-visibility:hidden] [image-rendering:auto]`}
           />
 
          {!isStreaming && (
@@ -512,7 +500,9 @@ function Dashboard() {
             </button>
 
             <button 
-              onClick={handleStop}
+              onClick={() => {
+                void handleStop();
+              }}
               disabled={!isStreaming}
               className={`h-[34px] px-3.5 flex items-center gap-2 rounded-sm border bg-[#1E1E1E] border-[#2A2A2A] text-[#737373] hover:text-[#A3A3A3] transition-all`}
             >

@@ -6,9 +6,9 @@ export const mockUsers = [
 ];
 
 export const mockTransactions = [
-  { id: 1, type: 'deposit', amount: 8000, date: 'Mar 25, 2026', status: 'Completed', description: 'Wallet top-up' },
+  { id: 1, type: 'deposit', amount: 8000, date: 'Mar 25, 2026', status: 'Completed', description: 'Credit top-up' },
   { id: 2, type: 'usage', amount: -4200, date: 'Mar 25, 2026', status: 'Completed', description: 'AI Streaming' },
-  { id: 3, type: 'deposit', amount: 34500, date: 'Mar 24, 2026', status: 'Completed', description: 'Wallet top-up' },
+  { id: 3, type: 'deposit', amount: 34500, date: 'Mar 24, 2026', status: 'Completed', description: 'Credit top-up' },
   { id: 4, type: 'usage', amount: -13800, date: 'Mar 24, 2026', status: 'Completed', description: 'AI Streaming' },
   { id: 5, type: 'deposit', amount: 20000, date: 'Mar 23, 2026', status: 'Completed', description: 'Subscription purchase' },
 ];
@@ -95,7 +95,7 @@ export const mockApi = {
       await delay(MOCK_DELAY);
       return {
         stats: {
-          balance: 24500,
+          credits: 24500,
           sessionsToday: 3,
           totalUsage: 125.5,
           streakDays: 7,
