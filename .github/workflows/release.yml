@@ -5,6 +5,10 @@ on:
     tags:
       - 'v*.*.*'  # Trigger on version tags like v1.0.0, v1.1.0, etc.
 
+permissions:
+  contents: write
+  releases: write
+
 jobs:
   build-and-release:
     runs-on: windows-latest
