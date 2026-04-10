@@ -1,0 +1,79 @@
+name: Build and Release
+
+on:
+  push:
+    tags:
+      - 'v*.*.*'  # Trigger on version tags like v1.0.0, v1.1.0, etc.
+
+jobs:
+  build-and-release:
+    runs-on: windows-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '18'
+
+      - name: Install dependencies
+        working-directory: ./app
+        run: npm ci
+
+      - name: Build app
+        working-directory: ./app
+        run: npm run electron:build
+        env:
+          VITE_API_BASE_URL: ${{ secrets.VITE_API_BASE_URL }}
+          VITE_FLUTTERWAVE_PUBLIC_KEY: ${{ secrets.VITE_FLUTTERWAVE_PUBLIC_KEY }}
+          VITE_SUPABASE_URL: ${{ secrets.VITE_SUPABASE_URL }}
+          VITE_SUPABASE_ANON_KEY: ${{ secrets.VITE_SUPABASE_ANON_KEY }}
+
+      - name: Find built executable
+        id: find_exe
+        shell: powershell
+        run: |
+          $exe = Get-ChildItem -Path "./app/release" -Filter "*.exe" -Recurse | Where-Object { $_.Name -match "Format-Boy" } | Select-Object -First 1
+          if ($exe) {
+            echo "exe_path=$($exe.FullName)" >> $env:GITHUB_OUTPUT
+            echo "exe_name=$($exe.Name)" >> $env:GITHUB_OUTPUT
+            Write-Host "Found executable: $($exe.FullName)"
+          } else {
+            Write-Host "No executable found in ./app/release"
+            exit 1
+          }
+
+      - name: Calculate SHA256
+        id: sha256
+        shell: powershell
+        run: |
+          $hash = (Get-FileHash -Path "${{ steps.find_exe.outputs.exe_path }}" -Algorithm SHA256).Hash
+          echo "hash=$hash" >> $env:GITHUB_OUTPUT
+          Write-Host "SHA256: $hash"
+
+      - name: Create Release
+        id: create_release
+        uses: actions/create-release@v1
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          tag_name: ${{ github.ref }}
+          release_name: Release ${{ github.ref_name }}
+          draft: false
+          prerelease: false
+          body: |
+            ## Format-Boy Desktop ${{ github.ref_name }}
+            
+            **SHA256:** `${{ steps.sha256.outputs.hash }}`
+
+      - name: Upload Release Asset
+        uses: actions/upload-release-asset@v1
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          upload_url: ${{ steps.create_release.outputs.upload_url }}
+          asset_path: ${{ steps.find_exe.outputs.exe_path }}
+          asset_name: ${{ steps.find_exe.outputs.exe_name }}
+          asset_content_type: application/octet-stream

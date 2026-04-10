@@ -26,6 +26,35 @@ function resolveStoragePath(template, version) {
   return trimSlashes(String(template || '').replace(/\{version\}/g, version));
 }
 
+async function fetchGitHubRelease(owner, repo, exePattern) {
+  try {
+    const response = await fetch(`https://api.github.com/repos/${owner}/${repo}/releases/latest`);
+    if (!response.ok) return null;
+
+    const release = await response.json();
+    const exeAsset = release.assets.find((asset) => exePattern.test(asset.name));
+    
+    if (!exeAsset) return null;
+
+    const version = release.tag_name.replace(/^v/, '');
+    const downloadUrl = exeAsset.browser_download_url;
+    const sha256 = release.body.match(/SHA256[:\s]+`?([a-f0-9]{64})`?/i)?.[1] || '';
+    const notes = release.body || release.name || '';
+
+    return {
+      version,
+      downloadUrl,
+      sha256,
+      notes,
+      fileName: exeAsset.name,
+      source: 'github-release',
+    };
+  } catch (error) {
+    console.error('Failed to fetch GitHub release:', error);
+    return null;
+  }
+}
+
 export default async function handler(req, res) {
   res.setHeader('Access-Control-Allow-Origin', '*');
   res.setHeader('Access-Control-Allow-Methods', 'GET, OPTIONS');
@@ -34,6 +63,27 @@ export default async function handler(req, res) {
   if (req.method === 'OPTIONS') return res.status(200).end();
   if (req.method !== 'GET') return res.status(405).json({ error: 'Method not allowed' });
 
+  // Try GitHub releases first if configured
+  const githubOwner = String(process.env.DESKTOP_GITHUB_OWNER || '').trim();
+  const githubRepo = String(process.env.DESKTOP_GITHUB_REPO || '').trim();
+  const githubExePattern = String(process.env.DESKTOP_GITHUB_EXE_PATTERN || 'Format-Boy.*\\.exe$').trim();
+  
+  if (githubOwner && githubRepo) {
+    const gitHubRelease = await fetchGitHubRelease(githubOwner, githubRepo, new RegExp(githubExePattern, 'i'));
+    if (gitHubRelease) {
+      return res.status(200).json({
+        version: gitHubRelease.version,
+        download_url: gitHubRelease.downloadUrl,
+        artifact_type: 'portable',
+        sha256: gitHubRelease.sha256 || undefined,
+        notes: gitHubRelease.notes || undefined,
+        file_name: gitHubRelease.fileName,
+        source: gitHubRelease.source,
+      });
+    }
+  }
+
+  // Fall back to environment-configured or Supabase approach
   const version = String(process.env.DESKTOP_LATEST_VERSION || FALLBACK_VERSION).trim();
   const fallbackDownloadUrl = String(process.env.DESKTOP_DOWNLOAD_URL || FALLBACK_DOWNLOAD_URL).trim();
   const artifactType = String(process.env.DESKTOP_ARTIFACT_TYPE || FALLBACK_ARTIFACT_TYPE).trim().toLowerCase();
