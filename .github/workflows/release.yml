@@ -53,27 +53,13 @@ jobs:
           echo "hash=$hash" >> $env:GITHUB_OUTPUT
           Write-Host "SHA256: $hash"
 
-      - name: Create Release
-        id: create_release
-        uses: actions/create-release@v1
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      - name: Create Release and Upload Asset
+        uses: softprops/action-gh-release@v1
         with:
-          tag_name: ${{ github.ref }}
-          release_name: Release ${{ github.ref_name }}
-          draft: false
-          prerelease: false
+          files: ${{ steps.find_exe.outputs.exe_path }}
           body: |
             ## Format-Boy Desktop ${{ github.ref_name }}
             
             **SHA256:** `${{ steps.sha256.outputs.hash }}`
-
-      - name: Upload Release Asset
-        uses: actions/upload-release-asset@v1
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        with:
-          upload_url: ${{ steps.create_release.outputs.upload_url }}
-          asset_path: ${{ steps.find_exe.outputs.exe_path }}
-          asset_name: ${{ steps.find_exe.outputs.exe_name }}
-          asset_content_type: application/octet-stream
