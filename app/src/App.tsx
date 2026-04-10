@@ -11,7 +11,9 @@ import LoadingScreen from '@/components/LoadingScreen';
 import { ROUTES } from '@/lib/routes';
 
 const Login = lazy(() => import('@/pages/Login'));
+const AuthCallback = lazy(() => import('@/pages/AuthCallback'));
 const Dashboard = lazy(() => import('@/pages/Dashboard'));
+const PreviewWindow = lazy(() => import('@/pages/PreviewWindow'));
 const Wallet = lazy(() => import('@/pages/Wallet'));
 const Subscription = lazy(() => import('@/pages/Subscription'));
 const Settings = lazy(() => import('@/pages/Settings'));
@@ -27,6 +29,10 @@ function App() {
             <AppProvider>
               <Suspense fallback={<LoadingScreen />}>
                 <Routes>
+                  <Route
+                    path={ROUTES.PUBLIC.AUTH_CALLBACK}
+                    element={<AuthCallback />}
+                  />
                   <Route
                     path={ROUTES.PUBLIC.LOGIN}
                     element={
@@ -51,6 +57,7 @@ function App() {
                     path={ROUTES.PUBLIC.PAYMENT_SUCCESS}
                     element={<PaymentSuccess />}
                   />
+                  <Route path="/preview" element={<PreviewWindow />} />
                   <Route
                     path="/wallet"
                     element={<Navigate to={ROUTES.PROTECTED.WALLET} replace />}

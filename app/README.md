@@ -71,3 +71,49 @@ export default defineConfig([
   },
 ])
 ```
+
+## Desktop Updater With Supabase Storage
+
+The Electron updater checks `GET /api/version` and expects a JSON response with:
+
+```json
+{
+  "version": "1.0.1",
+  "download_url": "https://...",
+  "artifact_type": "portable"
+}
+```
+
+This project now supports generating that `download_url` from Supabase Storage.
+
+### Recommended setup
+
+1. Create a bucket in Supabase Storage, for example `format-boy-updates`.
+2. Upload your Windows release file, for example `desktop/Format-Boy-Desktop-1.0.1.exe`.
+3. Set these environment variables on the backend that serves `/api/version`:
+
+```env
+SUPABASE_URL=https://your-project-ref.supabase.co
+SUPABASE_SERVICE_ROLE_KEY=your_service_role_key
+DESKTOP_LATEST_VERSION=1.0.1
+DESKTOP_ARTIFACT_TYPE=portable
+DESKTOP_SUPABASE_BUCKET=format-boy-updates
+DESKTOP_SUPABASE_PATH=desktop/Format-Boy-Desktop-{version}.exe
+DESKTOP_SUPABASE_ACCESS=signed
+DESKTOP_SIGNED_URL_EXPIRES=7200
+DESKTOP_DOWNLOAD_SHA256=
+DESKTOP_RELEASE_NOTES=Bug fixes and improvements
+```
+
+### Access modes
+
+- `DESKTOP_SUPABASE_ACCESS=signed`
+  Uses the Supabase service role key to create a temporary signed URL for a private bucket.
+- `DESKTOP_SUPABASE_ACCESS=public`
+  Builds a public Storage object URL. Use this only if the bucket is public.
+
+### Notes
+
+- `{version}` inside `DESKTOP_SUPABASE_PATH` is replaced automatically.
+- If Supabase Storage settings are not provided, `/api/version` falls back to `DESKTOP_DOWNLOAD_URL`.
+- The desktop updater needs a direct downloadable `.exe`, so Supabase Storage works well here. Plain MEGA share pages do not.

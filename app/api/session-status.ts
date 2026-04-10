@@ -1,5 +1,6 @@
 // @ts-nocheck
 import { supabaseAdmin, supabaseAdminConfigError } from './supabase.js';
+import { getWalletByUserId } from './credit-utils.js';
 
 const CREDITS_PER_SECOND = 2;
 const MAX_SESSION_DURATION = 600;
@@ -19,29 +20,38 @@ export default async function handler(req, res) {
   if (!supabaseAdmin) return res.status(503).json({ error: supabaseAdminConfigError });
 
   try {
-    const { data: walletData } = await supabaseAdmin
-      .from('wallets').select('credits').eq('user_id', userId).single();
+    const wallet = await getWalletByUserId(userId);
+    if (!wallet) {
+      return res.status(404).json({ error: 'Wallet not found' });
+    }
 
-    const actualCredits = walletData ? walletData.credits || 0 : 0;
+    const actualCredits = wallet.credits;
 
     const { data: activeSession } = await supabaseAdmin
       .from('sessions').select('*').eq('user_id', userId).eq('status', 'active')
       .order('created_at', { ascending: false }).limit(1).single();
 
     if (!activeSession) {
-      return res.json({ credits: actualCredits, secondsUsed: 0, creditsUsed: 0, remainingCredits: actualCredits, shouldStop: false });
+      return res.json({ secondsUsed: 0, creditsUsed: 0, remainingCredits: actualCredits, credits: actualCredits, shouldStop: false, forceEnd: false });
     }
 
-    const startTime = new Date(activeSession.start_time).getTime();
-    const elapsedSeconds = Math.floor((Date.now() - startTime) / 1000);
+    let startTimeStr = activeSession.start_time;
+    if (!startTimeStr.endsWith('Z') && !startTimeStr.includes('+')) {
+      startTimeStr = startTimeStr.replace(' ', 'T') + 'Z';
+    }
+    const startTime = new Date(startTimeStr).getTime();
+    
+    // Prevent negative seconds if there is a tiny clock drift
+    const elapsedSeconds = Math.max(0, Math.floor((Date.now() - startTime) / 1000));
     const cost = Math.round(elapsedSeconds * CREDITS_PER_SECOND);
     
     const remainingCredits = Math.max(0, actualCredits - cost);
-    let shouldStop = (remainingCredits <= 0) || (elapsedSeconds > MAX_SESSION_DURATION);
-    let forceEnd = remainingCredits <= 0;
+    const shouldStop = (remainingCredits <= 0) || (elapsedSeconds > MAX_SESSION_DURATION);
+    const forceEnd = remainingCredits <= 0;
 
     res.json({ secondsUsed: elapsedSeconds, creditsUsed: cost, cost, remainingCredits, credits: remainingCredits, shouldStop, forceEnd });
   } catch (error) {
-    res.status(500).json({ error: 'Internal server error' });
+    console.error('Session status error:', error);
+    res.status(500).json({ error: 'Failed to fetch credits' });
   }
 }

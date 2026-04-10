@@ -4,7 +4,8 @@ import { Button } from '@/components/ui/button';
 import { toast } from 'sonner';
 import { useAuth } from '@/context/AuthContext';
 import { useApp } from '@/context/AppContext';
-import { apiFetch } from '@/lib/api-client';
+import { apiFetch, isTimeoutError } from '@/lib/api-client';
+import { isFiniteNumber } from '@/lib/utils';
 
 interface PaymentModalProps {
   isOpen: boolean;
@@ -14,7 +15,7 @@ interface PaymentModalProps {
 
 export function PaymentModal({ isOpen, onClose, plan }: PaymentModalProps) {
   const { user } = useAuth();
-  const { addCredits } = useApp();
+  const { refreshCredits } = useApp();
   const [isProcessing, setIsProcessing] = useState(false);
   const [step, setStep] = useState<'initial' | 'initializing' | 'verifying' | 'success'>('initial');
 
@@ -79,28 +80,48 @@ export function PaymentModal({ isOpen, onClose, plan }: PaymentModalProps) {
                 transaction_id: data.transaction_id,
                 tx_ref: tx_ref,
               }),
+              retries: 0,
+              timeoutMs: 45_000,
             });
             const verifyData = await verifyRes.json();
 
             if (verifyData.status === 'success') {
-              setStep('success');
-              toast.success(`Payment verified! ${verifyData.creditsAdded?.toLocaleString() || 0} credits added.`);
-              if (typeof verifyData.creditsAdded === 'number') {
-                addCredits(verifyData.creditsAdded);
+              if (!isFiniteNumber(verifyData.creditsAdded)) {
+                throw new Error('Invalid payment verification response');
               }
+
+              try {
+                await refreshCredits();
+              } catch (syncError) {
+                console.warn('Failed to refresh credits after payment:', syncError);
+              }
+
+              setStep('success');
+              toast.success(`Payment verified! ${verifyData.creditsAdded.toLocaleString()} credits added.`);
               setTimeout(() => {
                 onClose();
                 setStep('initial');
                 setIsProcessing(false);
               }, 2000);
             } else {
+              if (verifyData.status === 'already_processed') {
+                try {
+                  await refreshCredits();
+                } catch (syncError) {
+                  console.warn('Failed to refresh credits after already-processed payment:', syncError);
+                }
+              }
               toast.error(verifyData.message || 'Payment verification failed');
               setStep('initial');
               setIsProcessing(false);
             }
           } catch (error) {
-            console.error('Verification error:', error);
-            toast.error('Unable to verify payment automatically. Contact support.');
+            if (isTimeoutError(error)) {
+              toast.error('Payment verification is taking longer than expected. Your credits may still be applied shortly.');
+            } else {
+              console.error('Verification error:', error);
+              toast.error('Unable to verify payment automatically. Contact support.');
+            }
             setStep('initial');
             setIsProcessing(false);
           }

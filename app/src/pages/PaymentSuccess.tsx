@@ -5,14 +5,15 @@ import { toast } from 'sonner';
 
 import { Button } from '@/components/ui/button';
 import { useApp } from '@/context/AppContext';
-import { apiFetch } from '@/lib/api-client';
+import { apiFetch, isAbortError, isTimeoutError } from '@/lib/api-client';
+import { isFiniteNumber } from '@/lib/utils';
 
 type VerifyState = 'verifying' | 'success' | 'already_processed' | 'failed';
 
 function PaymentSuccess() {
   const [searchParams] = useSearchParams();
   const navigate = useNavigate();
-  const { addCredits } = useApp();
+  const { refreshCredits } = useApp();
 
   const [state, setState] = useState<VerifyState>('verifying');
   const [message, setMessage] = useState('Verifying your payment...');
@@ -37,6 +38,8 @@ function PaymentSuccess() {
       return;
     }
 
+    const controller = new AbortController();
+
     const verifyPayment = async () => {
       try {
         const res = await apiFetch('/payment/flutterwave-verify', {
@@ -46,20 +49,35 @@ function PaymentSuccess() {
             transaction_id: transactionId,
             tx_ref: txRef,
           }),
+          signal: controller.signal,
+          retries: 0,
+          timeoutMs: 45_000,
         });
 
         const data = await res.json();
 
         if (data.status === 'success') {
-          setState('success');
-          setMessage(`${data.creditsAdded?.toLocaleString() || 0} credits have been added to your account.`);
-          setCreditedAmount(data.amountPaid || null);
-          setCreditedCredits(data.creditsAdded || null);
-          if (typeof data.creditsAdded === 'number') {
-            addCredits(data.creditsAdded);
+          if (!isFiniteNumber(data.creditsAdded)) {
+            throw new Error('Invalid payment verification response');
           }
+
+          try {
+            await refreshCredits();
+          } catch (syncError) {
+            console.warn('Failed to refresh credits after payment success:', syncError);
+          }
+
+          setState('success');
+          setMessage(`${data.creditsAdded.toLocaleString()} credits have been added to your account.`);
+          setCreditedAmount(isFiniteNumber(data.amountPaid) ? data.amountPaid : null);
+          setCreditedCredits(data.creditsAdded);
           toast.success('Payment successful! Credits added.');
         } else if (data.status === 'already_processed') {
+          try {
+            await refreshCredits();
+          } catch (syncError) {
+            console.warn('Failed to refresh credits after already-processed payment:', syncError);
+          }
           setState('already_processed');
           setMessage('This payment has already been processed.');
         } else {
@@ -68,14 +86,22 @@ function PaymentSuccess() {
           toast.error('Payment verification failed');
         }
       } catch (error) {
-        console.error('Verification error:', error);
+        if (isAbortError(error)) return;
+
         setState('failed');
+        if (isTimeoutError(error)) {
+          setMessage('Payment verification is taking longer than expected. The webhook may add your credits shortly.');
+          return;
+        }
+
+        console.error('Verification error:', error);
         setMessage('Unable to verify payment. The webhook may add your credits shortly.');
       }
     };
 
     verifyPayment();
-  }, [searchParams, addCredits]);
+    return () => controller.abort();
+  }, [refreshCredits, searchParams]);
 
   return (
     <div className="min-h-screen bg-[#0f0f10] flex items-center justify-center p-6">

@@ -1,5 +1,6 @@
 // @ts-nocheck
 import { supabaseAdmin, supabaseAdminConfigError } from '../supabase.js';
+import { requireWalletByUserId, logCreditUpdate, updateWalletCredits } from '../credit-utils.js';
 
 const CREDIT_PRICING = {
   500: 18500,
@@ -8,33 +9,6 @@ const CREDIT_PRICING = {
   5000: 185000
 };
 const CREDITS_PER_SECOND = 2;
-
-async function loadOrCreateCreditAccount(userId) {
-  let { data: creditAccount } = await supabaseAdmin
-    .from('wallets')
-    .select('id, credits')
-    .eq('user_id', userId)
-    .maybeSingle();
-
-  if (!creditAccount) {
-    const { data: createdAccount, error: createError } = await supabaseAdmin
-      .from('wallets')
-      .insert({
-        user_id: userId,
-        credits: 0,
-      })
-      .select('id, credits')
-      .single();
-
-    if (createError) {
-      throw createError;
-    }
-
-    creditAccount = createdAccount;
-  }
-
-  return creditAccount;
-}
 
 export default async function handler(req, res) {
   // Always respond 200 quickly to Flutterwave
@@ -99,7 +73,12 @@ export default async function handler(req, res) {
     }
 
     let creditsToAdd = 0;
-    const paidAmount = Number(amount || 0);
+    const paidAmount = Number(amount);
+    if (!Number.isFinite(paidAmount)) {
+      console.error(`Webhook: invalid paid amount for tx_ref ${tx_ref}`);
+      return res.status(200).json({ status: 'ok' });
+    }
+
     for (const [credits, expectedPrice] of Object.entries(CREDIT_PRICING)) {
       if (paidAmount === expectedPrice) {
         creditsToAdd = Number(credits);
@@ -112,13 +91,16 @@ export default async function handler(req, res) {
       return res.status(200).json({ status: 'ok' });
     }
 
-    const creditAccount = await loadOrCreateCreditAccount(userId);
-    const newCredits = (creditAccount.credits || 0) + creditsToAdd;
-
-    await supabaseAdmin
-      .from('wallets')
-      .update({ credits: newCredits })
-      .eq('user_id', userId);
+    const creditAccount = await requireWalletByUserId(userId, { createIfMissing: true });
+    const newCredits = creditAccount.credits + creditsToAdd;
+    const updatedWallet = await updateWalletCredits(userId, newCredits);
+    logCreditUpdate({
+      userId,
+      before: creditAccount.credits,
+      after: updatedWallet.credits,
+      change: creditsToAdd,
+      source: 'payment-webhook',
+    });
 
     // 7. Insert transaction record
     await supabaseAdmin
@@ -126,7 +108,7 @@ export default async function handler(req, res) {
       .insert({
         user_id: userId,
         wallet_id: creditAccount.id,
-        amount: Number(amount || 0),
+        amount: paidAmount,
         credits: creditsToAdd,
         type: 'credit',
         status: 'success',
@@ -145,7 +127,7 @@ export default async function handler(req, res) {
         created_at: new Date().toISOString(),
       });
 
-    console.log(`Webhook: added ${creditsToAdd} credits for user ${userId} (tx_ref: ${tx_ref})`);
+    console.log(`Webhook: added ${creditsToAdd} credits for user ${userId} (tx_ref: ${tx_ref}); balance=${updatedWallet.credits}`);
     return res.status(200).json({ status: 'ok' });
   } catch (error) {
     console.error('Webhook processing error:', error);

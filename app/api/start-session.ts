@@ -1,17 +1,22 @@
 // @ts-nocheck
 import { supabaseAdmin, supabaseAdminConfigError } from './supabase.js';
+import { getWalletByUserId, logCreditUpdate, updateWalletCredits } from './credit-utils.js';
 
 const CREDITS_PER_SECOND = 2;
 const MAX_SESSION_DURATION = 600;
 
 async function closeActiveSession(userId, activeSession) {
   try {
-    const { data: walletData } = await supabaseAdmin
-      .from('wallets').select('credits').eq('user_id', userId).single();
+    const wallet = await getWalletByUserId(userId);
+    if (!wallet) throw new Error('Wallet not found');
 
-    const actualCredits = walletData ? walletData.credits || 0 : 0;
-    const startTime = new Date(activeSession.start_time).getTime();
-    const elapsedSeconds = Math.floor((Date.now() - startTime) / 1000);
+    const actualCredits = wallet.credits;
+    let startTimeStr = activeSession.start_time;
+    if (!startTimeStr.endsWith('Z') && !startTimeStr.includes('+')) {
+      startTimeStr = startTimeStr.replace(' ', 'T') + 'Z';
+    }
+    const startTime = new Date(startTimeStr).getTime();
+    const elapsedSeconds = Math.max(0, Math.floor((Date.now() - startTime) / 1000));
     const cost = Math.round(elapsedSeconds * CREDITS_PER_SECOND);
     
     const finalCost = Math.min(actualCredits, cost);
@@ -27,10 +32,14 @@ async function closeActiveSession(userId, activeSession) {
       })
       .eq('id', activeSession.id).eq('status', 'active');
 
-    await supabaseAdmin
-      .from('wallets')
-      .update({ credits: newCredits })
-      .eq('user_id', userId);
+    const updatedWallet = await updateWalletCredits(userId, newCredits);
+    logCreditUpdate({
+      userId,
+      before: actualCredits,
+      after: updatedWallet.credits,
+      change: -finalCost,
+      source: 'session-close',
+    });
 
     if (finalCost > 0) {
       await supabaseAdmin.from('transactions').insert({
@@ -38,7 +47,7 @@ async function closeActiveSession(userId, activeSession) {
       });
     }
 
-    return { success: true, deducted: finalCost, remainingCredits: newCredits };
+    return { success: true, deducted: finalCost, remainingCredits: updatedWallet.credits };
   } catch (err) {
     console.error('Failed to close session:', err);
     return { success: false, message: 'Internal error closing session' };
@@ -63,29 +72,35 @@ export default async function handler(req, res) {
 
     if (existingActiveSessions && existingActiveSessions.length > 0) {
       for (const session of existingActiveSessions) {
-        await closeActiveSession(userId, session);
+        const closeResult = await closeActiveSession(userId, session);
+        if (!closeResult.success) {
+          return res.status(500).json({ allowed: false, error: closeResult.message || 'Failed to reconcile active session' });
+        }
       }
     }
 
-    const { data: freshWallet } = await supabaseAdmin
-      .from('wallets').select('credits').eq('user_id', userId).single();
+    const freshWallet = await getWalletByUserId(userId);
+    if (!freshWallet) {
+      return res.status(404).json({ allowed: false, error: 'Wallet not found' });
+    }
 
-    const currentCredits = freshWallet?.credits || 0;
+    const currentCredits = freshWallet.credits;
 
-    if (!freshWallet || currentCredits <= 0) {
+    if (currentCredits <= 0) {
       return res.json({ allowed: false, error: 'Insufficient credits', credits: currentCredits });
     }
 
     const { data: newSession, error: sessionError } = await supabaseAdmin
       .from('sessions')
       .insert({
-        user_id: userId, status: 'active', start_time: new Date(), cost: 0, seconds_used: 0
+        user_id: userId, status: 'active', start_time: new Date().toISOString(), cost: 0, seconds_used: 0
       }).select('id').single();
 
     if (sessionError) return res.status(500).json({ allowed: false, error: 'Failed to create session' });
 
     res.json({ allowed: true, sessionId: newSession.id, token: process.env.DECART_API_KEY, credits: currentCredits });
   } catch (error) {
+    console.error('Start session error:', error);
     res.status(500).json({ allowed: false, error: 'Internal server error' });
   }
 }

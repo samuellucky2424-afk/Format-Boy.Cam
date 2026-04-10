@@ -1,13 +1,15 @@
-import { useEffect, useState } from 'react';
-import { ArrowLeft, ArrowRight, Coins, Loader2 } from 'lucide-react';
+import { useState } from 'react';
+import { ArrowLeft, ArrowRight, Coins, Loader2, LogIn, LogOut } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import { toast } from 'sonner';
 
 import { Button } from '@/components/ui/button';
 import { useAuth } from '@/context/AuthContext';
 import { useApp } from '@/context/AppContext';
-import { apiFetch } from '@/lib/api-client';
-import { PaymentModal } from '@/components/PaymentModal';
+import { apiFetch, isTimeoutError, isAbortError } from '@/lib/api-client';
+import { ROUTES } from '@/lib/routes';
+import { isFiniteNumber } from '@/lib/utils';
+
 const CREDIT_PLANS = [
   { credits: 500, priceNGN: 18500 },
   { credits: 1000, priceNGN: 37000 },
@@ -27,47 +29,45 @@ function formatTime(credits: number): string {
   return `~${remainingSeconds}s`;
 }
 
+/** Lazy-load the Flutterwave SDK only when needed to avoid analytics 400 errors on page load */
+function loadFlutterwaveSDK(): Promise<void> {
+  return new Promise((resolve, reject) => {
+    if (typeof (window as any).FlutterwaveCheckout === 'function') {
+      resolve();
+      return;
+    }
+    const existing = document.querySelector('script[src*="checkout.flutterwave.com"]');
+    if (existing) {
+      existing.addEventListener('load', () => resolve());
+      return;
+    }
+    const script = document.createElement('script');
+    script.src = 'https://checkout.flutterwave.com/v3.js';
+    script.async = true;
+    script.onload = () => resolve();
+    script.onerror = () => reject(new Error('Failed to load Flutterwave SDK'));
+    document.head.appendChild(script);
+  });
+}
+
 function Subscription() {
   const navigate = useNavigate();
-  const { user } = useAuth();
-  const { addCredits } = useApp();
+  const { user, logout, loading: authLoading } = useAuth();
+  const { refreshCredits } = useApp();
   const [selectedPlan, setSelectedPlan] = useState<typeof CREDIT_PLANS[0] | null>(null);
   const [isProcessing, setIsProcessing] = useState(false);
-  const [isPaymentModalOpen, setIsPaymentModalOpen] = useState(false);
-  const [ngnRate, setNgnRate] = useState<number>(1500);
-  const [isLoadingRate, setIsLoadingRate] = useState(true);
-  const [isFallbackRate, setIsFallbackRate] = useState(false);
-  const [rateUpdatedAt, setRateUpdatedAt] = useState<string | null>(null);
-
-  useEffect(() => {
-    const fetchRate = async () => {
-      try {
-        const res = await apiFetch('/rate');
-        if (!res.ok) {
-          throw new Error(`HTTP ${res.status}`);
-        }
-
-        const data = await res.json();
-        if (typeof data.rate === 'number') {
-          setNgnRate(data.rate);
-          setIsFallbackRate(data.live !== true);
-          setRateUpdatedAt(data.updatedAt || null);
-        }
-      } catch (error) {
-        console.warn('Failed to fetch exchange rate:', error, 'using fallback');
-        setNgnRate(1500);
-        setIsFallbackRate(true);
-        setRateUpdatedAt(null);
-      } finally {
-        setIsLoadingRate(false);
-      }
-    };
-
-    fetchRate();
-  }, []);
 
   const handleSelectPlan = (plan: typeof CREDIT_PLANS[0]) => {
     setSelectedPlan(plan);
+  };
+
+  const handleAuthAction = () => {
+    if (user) {
+      void logout();
+      return;
+    }
+
+    navigate(ROUTES.PUBLIC.LOGIN);
   };
 
   const handleProceedToPayment = async () => {
@@ -75,7 +75,7 @@ function Subscription() {
 
     if (!user) {
       toast.error('Please log in to purchase credits.');
-      navigate('/login');
+      navigate(ROUTES.PUBLIC.LOGIN);
       return;
     }
 
@@ -84,56 +84,76 @@ function Subscription() {
     setIsProcessing(true);
 
     try {
+      // Lazy-load Flutterwave SDK on first payment attempt
+      await loadFlutterwaveSDK();
+
       const tx_ref = `FMT-${Date.now()}-${user.id}`;
-      if (typeof (window as any).FlutterwaveCheckout === "function") {
-        (window as any).FlutterwaveCheckout({
-          public_key: import.meta.env.VITE_FLUTTERWAVE_PUBLIC_KEY,
-          tx_ref: tx_ref,
-          amount: amountNGN,
-          currency: "NGN",
-          payment_options: "card, mobilemoneyghana, ussd",
-          customer: { email: user.email },
-          customizations: {
-            title: "Format-Boy Cam - Credits",
-            description: `Buy ${selectedPlan.credits.toLocaleString()} credits for ₦${amountNGN.toLocaleString()}`,
-            logo: "/favicon.png",
-          },
-          callback: async function (data: any) {
-            setIsProcessing(true);
-            try {
-              const res = await apiFetch('/payment/flutterwave-verify', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({
-                  transaction_id: data.transaction_id,
-                  tx_ref: tx_ref,
-                }),
-              });
-              const verifyData = await res.json();
-              if (verifyData.status === 'success') {
-                toast.success(`Payment verified! ${verifyData.creditsAdded?.toLocaleString() || 0} credits added.`);
-                if (typeof verifyData.creditsAdded === 'number') {
-                  addCredits(verifyData.creditsAdded);
-                }
-                setSelectedPlan(null);
-              } else {
-                toast.error(verifyData.message || 'Payment verification failed');
+      (window as any).FlutterwaveCheckout({
+        public_key: import.meta.env.VITE_FLUTTERWAVE_PUBLIC_KEY,
+        tx_ref: tx_ref,
+        amount: amountNGN,
+        currency: "NGN",
+        payment_options: "card, mobilemoneyghana, ussd",
+        customer: { email: user.email },
+        customizations: {
+          title: "Format-Boy Cam - Credits",
+          description: `Buy ${selectedPlan.credits.toLocaleString()} credits for ₦${amountNGN.toLocaleString()}`,
+          logo: "/favicon.png",
+        },
+        callback: async function (data: any) {
+          setIsProcessing(true);
+          try {
+            const res = await apiFetch('/payment/flutterwave-verify', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({
+                transaction_id: data.transaction_id,
+                tx_ref: tx_ref,
+              }),
+              retries: 0,
+              timeoutMs: 45_000,
+            });
+            const verifyData = await res.json();
+            if (verifyData.status === 'success') {
+              if (!isFiniteNumber(verifyData.creditsAdded)) {
+                throw new Error('Invalid payment verification response');
               }
-            } catch (error) {
+
+              try {
+                await refreshCredits();
+              } catch (syncError) {
+                console.warn('Failed to refresh credits after payment success:', syncError);
+              }
+
+              toast.success(`Payment verified! ${verifyData.creditsAdded.toLocaleString()} credits added.`);
+              setSelectedPlan(null);
+            } else if (verifyData.status === 'already_processed') {
+              try {
+                await refreshCredits();
+              } catch (syncError) {
+                console.warn('Failed to refresh credits after already-processed payment:', syncError);
+              }
+              toast.success('Payment already processed.');
+            } else {
+              toast.error(verifyData.message || 'Payment verification failed');
+            }
+          } catch (error) {
+            if (isTimeoutError(error)) {
+              toast.error('Payment verification is taking longer than expected. Your credits may still be applied shortly.');
+            } else if (isAbortError(error)) {
+              // Silently ignore abort errors (e.g. component unmount, navigation)
+            } else {
               console.error('Verification error:', error);
               toast.error('Unable to verify payment automatically.');
-            } finally {
-              setIsProcessing(false);
             }
-          },
-          onclose: function () {
+          } finally {
             setIsProcessing(false);
           }
-        });
-      } else {
-        toast.error('Flutterwave SDK not loaded. Please refresh the page.');
-        setIsProcessing(false);
-      }
+        },
+        onclose: function () {
+          setIsProcessing(false);
+        }
+      });
     } catch (error) {
       console.error('Payment init error:', error);
       toast.error('Unable to start payment. Please try again.');
@@ -141,24 +161,52 @@ function Subscription() {
     }
   };
 
-  const getPriceNGN = (priceUSD: number) => Math.round(priceUSD * ngnRate);
-  const hasLiveRate = !isLoadingRate && !isFallbackRate;
-
   return (
     <div className="min-h-screen bg-[#0f0f10] p-6 lg:p-12 flex flex-col items-center">
       <div className="w-full max-w-[800px] pb-32">
-        <Button
-          variant="ghost"
-          onClick={() => navigate(-1)}
-          className="mb-8 text-[#a1a1aa] hover:text-white"
-        >
-          <ArrowLeft className="w-4 h-4 mr-2" />
-          Back
-        </Button>
+        <div className="mb-8 flex items-center justify-between gap-3">
+          <Button
+            variant="ghost"
+            onClick={() => navigate(-1)}
+            className="text-[#a1a1aa] hover:text-white"
+          >
+            <ArrowLeft className="w-4 h-4 mr-2" />
+            Back
+          </Button>
+
+          <Button
+            type="button"
+            variant="ghost"
+            onClick={handleAuthAction}
+            disabled={authLoading}
+            className="border border-[#27272a] text-[#a1a1aa] hover:text-white hover:bg-[#18181b]"
+          >
+            {authLoading ? (
+              <>
+                <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+                {user ? 'Signing out...' : 'Checking session...'}
+              </>
+            ) : user ? (
+              <>
+                <LogOut className="w-4 h-4 mr-2" />
+                Logout
+              </>
+            ) : (
+              <>
+                <LogIn className="w-4 h-4 mr-2" />
+                Login
+              </>
+            )}
+          </Button>
+        </div>
 
         <div className="mb-12">
           <h1 className="text-3xl font-bold text-white mb-2 tracking-tight">Purchase Credits</h1>
-          <p className="text-sm text-[#a1a1aa]">Select credits to power your AI transformations</p>
+          <p className="text-sm text-[#a1a1aa]">
+            {user
+              ? `Signed in as ${user.email}. Select credits to power your AI transformations`
+              : 'Select credits to power your AI transformations'}
+          </p>
         </div>
 
         <div className="mb-8">

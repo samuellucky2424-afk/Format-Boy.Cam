@@ -1,5 +1,6 @@
 // @ts-nocheck
 import { supabaseAdmin, supabaseAdminConfigError } from './supabase.js';
+import { getWalletByUserId } from './credit-utils.js';
 
 export default async function handler(req, res) {
   res.setHeader("Access-Control-Allow-Origin", "*");
@@ -12,20 +13,10 @@ export default async function handler(req, res) {
   if (!userId) return res.status(400).json({ error: 'User ID is required' });
 
   if (!supabaseAdmin) {
-    return res.json({
-      credits: 0,
-      remainingSeconds: 0,
-      transactions: [],
-      warning: supabaseAdminConfigError,
-    });
+    return res.status(503).json({ error: supabaseAdminConfigError });
   }
 
   try {
-    const { data: creditAccount, error: creditAccountError } = await supabaseAdmin
-      .from('wallets')
-      .select('credits')
-      .eq('user_id', userId)
-      .maybeSingle();
     const { data: txs, error: txsError } = await supabaseAdmin
       .from('transactions')
       .select('*')
@@ -33,30 +24,32 @@ export default async function handler(req, res) {
       .order('created_at', { ascending: false })
       .limit(50);
 
-    if (creditAccountError) {
-      console.error('Failed to load credits:', creditAccountError);
-    }
-
     if (txsError) {
       console.error('Failed to load transactions:', txsError);
+      return res.status(500).json({ error: 'Failed to fetch credits' });
+    }
+
+    const creditAccount = await getWalletByUserId(userId);
+    if (!creditAccount) {
+      return res.status(404).json({ error: 'Wallet not found' });
     }
 
     const mappedTxs = (txs || []).map(tx => ({
       id: tx.id,
       type: tx.type,
       amount: 0,
-      credits: tx.credits || 0,
+      credits: typeof tx.credits === 'number' && Number.isFinite(tx.credits) ? tx.credits : undefined,
       description: tx.description || (tx.type === 'credit' ? 'Credits purchased' : 'Session usage'),
       timestamp: tx.created_at,
     }));
 
     res.json({
-      credits: creditAccount?.credits || 0,
-      remainingSeconds: Math.floor((creditAccount?.credits || 0) / 2),
+      credits: creditAccount.credits,
+      remainingSeconds: Math.floor(creditAccount.credits / 2),
       transactions: mappedTxs
     });
   } catch (error) {
     console.error('Credits handler error:', error);
-    res.json({ credits: 0, remainingSeconds: 0, transactions: [] });
+    res.status(500).json({ error: 'Failed to fetch credits' });
   }
 }

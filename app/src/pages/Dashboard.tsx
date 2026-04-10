@@ -1,17 +1,21 @@
 import { useState, useRef, useEffect, useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Upload, Play, Square, Clock, Zap, Monitor, Settings, Plus, Camera, Coins } from 'lucide-react';
+import { Upload, Play, Square, Clock, Zap, Monitor, Plus, Coins, Minus, X, Settings } from 'lucide-react';
 import { toast } from 'sonner';
 import { useAuth } from '@/context/AuthContext';
 import { useApp } from '@/context/AppContext';
 import { apiFetch } from '@/lib/api-client';
-import { VirtualCameraService } from '@/services/VirtualCameraService';
+import { ROUTES } from '@/lib/routes';
+import { isFiniteNumber } from '@/lib/utils';
 
 interface RealtimeClient {
   disconnect: () => void;
   set: (config: { prompt?: string; enhance?: boolean; image?: string | Blob | File }) => Promise<void>;
   setPrompt: (text: string, options?: { enhance?: boolean }) => Promise<void>;
 }
+
+const PREVIEW_WINDOW_NAME = 'format-boy-preview';
+const PREVIEW_WINDOW_FEATURES = 'popup=yes,width=1280,height=720,minWidth=640,minHeight=360,resizable=yes,scrollbars=no';
 
 async function apiRequest<T>(endpoint: string, options?: RequestInit): Promise<T> {
   const response = await apiFetch(endpoint, {
@@ -36,8 +40,7 @@ function Dashboard() {
   const [isObsMode, setIsObsMode] = useState(false);
   const [uploadedImage, setUploadedImage] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState(false);
-  const [isVirtualCamActive, setIsVirtualCamActive] = useState(false);
-  const [cameraDevices, setCameraDevices] = useState<MediaDeviceInfo[]>([]);
+    const [cameraDevices, setCameraDevices] = useState<MediaDeviceInfo[]>([]);
   const [selectedCameraId, setSelectedCameraId] = useState<string>('');
   // Default prompt since the new UI doesn't have an input field yet
   const [prompt] = useState('A person looking professional');
@@ -47,13 +50,75 @@ function Dashboard() {
   const webcamStreamRef = useRef<MediaStream | null>(null);
   const realtimeClientRef = useRef<RealtimeClient | null>(null);
   const pollIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
-  const virtualCamRef = useRef<VirtualCameraService | null>(null);
+  const previewWindowRef = useRef<Window | null>(null);
 
   const CREDITS_PER_SECOND = 2;
   const POLLING_INTERVAL = 1000;
 
+  const getPreviewUrl = useCallback(() => {
+    const previewUrl = new URL(window.location.href);
+    previewUrl.hash = '/preview';
+    return previewUrl.toString();
+  }, []);
+
+  const closeObsPreviewWindow = useCallback((updateState = true) => {
+    const previewWindow = previewWindowRef.current;
+
+    if (previewWindow && !previewWindow.closed) {
+      previewWindow.close();
+    }
+
+    previewWindowRef.current = null;
+
+    if (updateState) {
+      setIsObsMode(false);
+    }
+  }, []);
+
+  const openObsPreviewWindow = useCallback(() => {
+    const existingWindow = previewWindowRef.current;
+
+    if (existingWindow && !existingWindow.closed) {
+      existingWindow.focus();
+      setIsObsMode(true);
+      return;
+    }
+
+    const previewWindow = window.open(
+      getPreviewUrl(),
+      PREVIEW_WINDOW_NAME,
+      PREVIEW_WINDOW_FEATURES
+    );
+
+    if (!previewWindow) {
+      toast.error('Could not open the OBS preview window.');
+      return;
+    }
+
+    previewWindowRef.current = previewWindow;
+    previewWindow.focus();
+    setIsObsMode(true);
+    toast.success('OBS can now capture the "Format-Boy preview" window.');
+  }, [getPreviewUrl]);
+
+  const handleObsPreviewToggle = useCallback(() => {
+    if (previewWindowRef.current && !previewWindowRef.current.closed) {
+      closeObsPreviewWindow();
+      return;
+    }
+
+    openObsPreviewWindow();
+  }, [closeObsPreviewWindow, openObsPreviewWindow]);
+
+  const handleWindowControl = (action: 'minimize' | 'maximize' | 'close') => {
+    if (typeof (window as any).require !== 'undefined') {
+      const { ipcRenderer } = (window as any).require('electron');
+      ipcRenderer.send(`window-${action}`);
+    }
+  };
+
   useEffect(() => {
-    return () => {
+        return () => {
       if (pollIntervalRef.current) {
         clearInterval(pollIntervalRef.current);
       }
@@ -63,21 +128,30 @@ function Dashboard() {
       if (realtimeClientRef.current) {
         realtimeClientRef.current.disconnect();
       }
-      if (virtualCamRef.current) {
-        virtualCamRef.current.stop();
-      }
+      closeObsPreviewWindow(false);
     };
-  }, []);
+  }, [closeObsPreviewWindow]);
 
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
       if (e.key === 'Escape' && isObsMode) {
-        setIsObsMode(false);
+        closeObsPreviewWindow();
       }
     };
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [isObsMode]);
+  }, [closeObsPreviewWindow, isObsMode]);
+
+  useEffect(() => {
+    const intervalId = window.setInterval(() => {
+      if (previewWindowRef.current && previewWindowRef.current.closed) {
+        previewWindowRef.current = null;
+        setIsObsMode(false);
+      }
+    }, 500);
+
+    return () => window.clearInterval(intervalId);
+  }, []);
 
   const enumerateCameras = useCallback(async () => {
     try {
@@ -104,58 +178,13 @@ function Dashboard() {
     return () => navigator.mediaDevices.removeEventListener('devicechange', enumerateCameras);
   }, [enumerateCameras]);
 
-  useEffect(() => {
+    useEffect(() => {
     if (isStreaming && outputVideoRef.current) {
       outputVideoRef.current.play().catch((err) => console.error('Play failed after streaming activated:', err));
-    } else if (!isStreaming) {
-      if (virtualCamRef.current) {
-        virtualCamRef.current.stop();
-        virtualCamRef.current = null;
-      }
-      setIsVirtualCamActive(false);
     }
   }, [isStreaming]);
 
-  const toggleVirtualCamera = async (activate?: boolean) => {
-    const shouldActivate = activate !== undefined ? activate : !isVirtualCamActive;
-    
-    if (shouldActivate) {
-      if (!outputVideoRef.current) return;
-      
-      virtualCamRef.current = new VirtualCameraService();
-      const stream = await virtualCamRef.current.start(outputVideoRef.current);
-      
-      if (stream) {
-        setIsVirtualCamActive(true);
-        // Notify Electron main process
-        try {
-          // @ts-ignore - electron bridge
-          if (window.electron) {
-            // @ts-ignore
-            await window.electron.invoke('virtual-camera:start');
-          }
-        } catch (e) { console.log('Electron bridge not available'); }
-        
-        toast.success('Virtual Camera started - Select "Format-Boy.CAM Virtual Cam" in your app');
-      }
-    } else {
-      if (virtualCamRef.current) {
-        virtualCamRef.current.stop();
-        virtualCamRef.current = null;
-      }
-      setIsVirtualCamActive(false);
-      
-      try {
-        // @ts-ignore
-        if (window.electron) {
-          // @ts-ignore
-          await window.electron.invoke('virtual-camera:stop');
-        }
-      } catch (e) {}
-      
-      toast.info('Virtual Camera stopped');
-    }
-  };
+  
 
   const startWebcam = async () => {
     try {
@@ -287,8 +316,17 @@ function Dashboard() {
   const pollSessionStatus = useCallback(async () => {
     try {
       const response = await apiRequest<{ credits?: number; secondsUsed: number; creditsUsed?: number; remainingCredits?: number; shouldStop: boolean; forceEnd?: boolean }>(`/session-status?userId=${user?.id}`);
-      const latestCredits = response.remainingCredits ?? response.credits ?? 0;
-      setCredits(latestCredits);
+      const latestCredits = isFiniteNumber(response.remainingCredits)
+        ? response.remainingCredits
+        : isFiniteNumber(response.credits)
+          ? response.credits
+          : null;
+
+      if (isFiniteNumber(latestCredits)) {
+        setCredits(latestCredits);
+      } else {
+        console.error('Invalid credit response', response);
+      }
 
       if (response.shouldStop || response.forceEnd) {
         await handleStop(false);
@@ -321,9 +359,10 @@ function Dashboard() {
         return;
       }
 
-      // Update credits from server response
-      if (startResponse.credits !== undefined) {
+      if (isFiniteNumber(startResponse.credits)) {
         setCredits(startResponse.credits);
+      } else if (startResponse.credits !== undefined) {
+        console.error('Invalid credit response', startResponse);
       }
         
       const sessionToken = startResponse.token || '';
@@ -361,11 +400,10 @@ function Dashboard() {
         body: JSON.stringify({ userId: user?.id })
       });
       
-      if (response) {
-        const latestCredits = response.remainingCredits;
-        if (latestCredits !== undefined) {
-          setCredits(latestCredits);
-        }
+      if (response && isFiniteNumber(response.remainingCredits)) {
+        setCredits(response.remainingCredits);
+      } else if (response && response.remainingCredits !== undefined) {
+        console.error('Invalid credit response', response);
       }
     } catch (error) {
       console.error('Stop session error:', error);
@@ -443,15 +481,23 @@ function Dashboard() {
   return (
     <div className="w-screen h-screen bg-[#111111] flex flex-col font-sans text-white overflow-hidden">
       {/* Header */}
-      <header className="flex items-center justify-between px-6 py-4 flex-shrink-0 relative z-10">
+      <header className="flex items-center justify-between px-6 py-4 flex-shrink-0 relative z-10 app-region-drag">
         <div className="flex items-center gap-[2px]">
           <img src="./logo.png" alt="Logo" className="w-8 h-8 object-cover rounded-full mr-2" />
           <span className="text-xl font-bold tracking-widest text-[#FFFFFF]">FORMAT-BOY</span>
           <span className="text-xl font-medium tracking-widest text-[#71717A]">.CAM</span>
         </div>
-        <button title="Settings" className="p-2 text-[#71717A] hover:text-white transition-colors">
-          <Settings className="w-[18px] h-[18px]" />
-        </button>
+        <div className="flex items-center gap-1 app-region-no-drag">
+          <button title="Minimize" aria-label="Minimize" onClick={() => handleWindowControl('minimize')} className="p-2 text-[#71717A] hover:text-white transition-colors focus:outline-none">
+            <Minus className="w-[18px] h-[18px]" />
+          </button>
+          <button title="Maximize" aria-label="Maximize" onClick={() => handleWindowControl('maximize')} className="p-2 text-[#71717A] hover:text-white transition-colors focus:outline-none">
+            <Square className="w-[15px] h-[15px]" />
+          </button>
+          <button title="Close" aria-label="Close" onClick={() => handleWindowControl('close')} className="p-2 text-[#71717A] hover:text-[#FFFFFF] hover:bg-red-500 rounded transition-colors focus:outline-none">
+            <X className="w-[18px] h-[18px]" />
+          </button>
+        </div>
       </header>
 
       {/* Main Content Area */}
@@ -462,7 +508,7 @@ function Dashboard() {
             autoPlay 
             playsInline
             muted
-            className={`w-full h-full ${isObsMode ? "object-cover" : "object-contain"} ${isStreaming ? 'block' : 'hidden'} will-change-transform [transform:translateZ(0)] [backface-visibility:hidden] [image-rendering:auto]`}
+            className={`w-full h-full object-contain ${isStreaming ? 'block' : 'hidden'} will-change-transform [transform:translateZ(0)] [backface-visibility:hidden] [image-rendering:auto]`}
           />
 
          {!isStreaming && (
@@ -511,11 +557,15 @@ function Dashboard() {
             </button>
 
             <button 
-              onClick={() => setIsObsMode(!isObsMode)}
-              className="h-[34px] px-3.5 flex items-center gap-2 rounded-sm border bg-[#1E1E1E] border-[#2A2A2A] text-[#737373] hover:text-[#A3A3A3] transition-all ml-2"
+              onClick={handleObsPreviewToggle}
+              className={`h-[34px] px-3.5 flex items-center gap-2 rounded-sm border transition-all ml-2 ${
+                isObsMode
+                  ? 'bg-[#122A1F] border-[#133C29] text-[#22C55E]'
+                  : 'bg-[#122A1F] border-[#133C29] text-[#22C55E] hover:bg-[#153828]'
+              }`}
             >
               <Monitor className="w-3.5 h-3.5 opacity-80" />
-              <span className="font-medium text-[13px]">OBS</span>
+              <span className="font-medium text-[13px]">{isObsMode ? 'OBS Preview On' : 'OBS Preview'}</span>
             </button>
 
              <button 
@@ -541,31 +591,28 @@ function Dashboard() {
               </select>
             )}
 
-            <button 
-              onClick={() => toggleVirtualCamera()}
-              disabled={!isStreaming}
-              className={`h-[34px] px-3.5 flex items-center gap-2 rounded-sm border transition-all ml-1 ${
-                isVirtualCamActive 
-                  ? 'bg-[#122A1F] border-[#133C29] text-[#22C55E]' 
-                  : 'bg-[#1E1E1E] border-[#2A2A2A] text-[#737373] hover:text-[#A3A3A3]'
-              }`}
-            >
-              <Camera className="w-3.5 h-3.5 opacity-80" />
-              <span className="font-medium text-[13px]">{isVirtualCamActive ? 'Cam Active' : 'Virtual Cam'}</span>
-            </button>
+            
          </div>
 
          <div className="flex items-center h-full">
-            <div className="flex items-center h-full gap-2 px-5">
-               <Zap className="w-3.5 h-3.5 text-[#F59E0B] fill-[#F59E0B]" />
-               <div className="flex flex-col justify-center gap-[2px]">
-                  <span className="text-[8px] text-[#A1A1AA] font-bold tracking-widest uppercase">Usage Rate</span>
-                  <div className="flex items-baseline gap-1">
-                     <span className="text-xs font-bold text-[#E5E5E5] uppercase">2 credits</span>
-                     <span className="text-[9px] text-[#737373] font-medium">/sec</span>
-                  </div>
-               </div>
-            </div>
+             <div className="flex items-center h-full gap-2 px-5">
+                <Zap className="w-3.5 h-3.5 text-[#F59E0B] fill-[#F59E0B]" />
+                <div className="flex flex-col justify-center gap-[2px]">
+                   <span className="text-[8px] text-[#A1A1AA] font-bold tracking-widest uppercase">Usage Rate</span>
+                   <div className="flex items-baseline gap-1">
+                      <span className="text-xs font-bold text-[#E5E5E5] uppercase">2 credits</span>
+                      <span className="text-[9px] text-[#737373] font-medium">/sec</span>
+                   </div>
+                </div>
+                <button
+                  onClick={() => navigate(ROUTES.PROTECTED.SETTINGS)}
+                  title="Open settings"
+                  aria-label="Open settings"
+                  className="ml-2 h-[28px] w-[28px] rounded-sm border border-[#2A2A2A] bg-[#1E1E1E] text-[#A1A1AA] hover:bg-[#252525] hover:text-white transition-colors flex items-center justify-center"
+                >
+                  <Settings className="w-3.5 h-3.5" />
+                </button>
+             </div>
             
             <div className="flex items-center h-full gap-3 px-5 border-l border-[#222222]">
                <div className="flex flex-col justify-center gap-[2px]">

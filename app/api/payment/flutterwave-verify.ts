@@ -1,5 +1,6 @@
 // @ts-nocheck
 import { supabaseAdmin, supabaseAdminConfigError } from '../supabase.js';
+import { requireWalletByUserId, logCreditUpdate, updateWalletCredits } from '../credit-utils.js';
 
 const CREDIT_PRICING = {
   500: 18500,
@@ -8,33 +9,6 @@ const CREDIT_PRICING = {
   5000: 185000
 };
 const CREDITS_PER_SECOND = 2;
-
-async function loadOrCreateCreditAccount(userId) {
-  let { data: creditAccount } = await supabaseAdmin
-    .from('wallets')
-    .select('id, credits')
-    .eq('user_id', userId)
-    .maybeSingle();
-
-  if (!creditAccount) {
-    const { data: createdAccount, error: createError } = await supabaseAdmin
-      .from('wallets')
-      .insert({
-        user_id: userId,
-        credits: 0,
-      })
-      .select('id, credits')
-      .single();
-
-    if (createError) {
-      throw createError;
-    }
-
-    creditAccount = createdAccount;
-  }
-
-  return creditAccount;
-}
 
 export default async function handler(req, res) {
   // CORS
@@ -100,7 +74,14 @@ export default async function handler(req, res) {
       });
     }
 
-    const amount = Number(verifyData.data.amount || 0);
+    const amount = Number(verifyData.data.amount);
+    if (!Number.isFinite(amount)) {
+      return res.status(400).json({
+        status: 'failed',
+        message: 'Invalid payment amount from provider',
+      });
+    }
+
     const reference = verifyData.data.tx_ref;
 
     if (tx_ref && tx_ref !== reference) {
@@ -151,13 +132,17 @@ export default async function handler(req, res) {
         message: `Amount NGN ${amount} does not match any valid credit tier.`,
       });
     }
-    const creditAccount = await loadOrCreateCreditAccount(userId);
-    const newCredits = (creditAccount.credits || 0) + creditsToAdd;
 
-    await supabaseAdmin
-      .from('wallets')
-      .update({ credits: newCredits })
-      .eq('user_id', userId);
+    const creditAccount = await requireWalletByUserId(userId, { createIfMissing: true });
+    const newCredits = creditAccount.credits + creditsToAdd;
+    const updatedWallet = await updateWalletCredits(userId, newCredits);
+    logCreditUpdate({
+      userId,
+      before: creditAccount.credits,
+      after: updatedWallet.credits,
+      change: creditsToAdd,
+      source: 'payment-verify',
+    });
 
     // 6. Insert transaction record
     await supabaseAdmin
@@ -186,9 +171,9 @@ export default async function handler(req, res) {
       status: 'success',
       message: 'Payment verified and credits added',
       amountPaid: amount,
-      newCredits,
+      newCredits: updatedWallet.credits,
       creditsAdded: creditsToAdd,
-      remainingSeconds: Math.floor(newCredits / CREDITS_PER_SECOND),
+      remainingSeconds: Math.floor(updatedWallet.credits / CREDITS_PER_SECOND),
     });
   } catch (error) {
     console.error('Flutterwave verify error:', error);

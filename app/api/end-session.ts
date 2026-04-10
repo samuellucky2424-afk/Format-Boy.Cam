@@ -1,16 +1,21 @@
 // @ts-nocheck
 import { supabaseAdmin, supabaseAdminConfigError } from './supabase.js';
+import { getWalletByUserId, logCreditUpdate, updateWalletCredits } from './credit-utils.js';
 
 const CREDITS_PER_SECOND = 2;
 
 async function closeActiveSession(userId, activeSession) {
   try {
-    const { data: walletData } = await supabaseAdmin
-      .from('wallets').select('credits').eq('user_id', userId).single();
+    const wallet = await getWalletByUserId(userId);
+    if (!wallet) throw new Error('Wallet not found');
 
-    const actualCredits = walletData ? walletData.credits || 0 : 0;
-    const startTime = new Date(activeSession.start_time).getTime();
-    const elapsedSeconds = Math.floor((Date.now() - startTime) / 1000);
+    const actualCredits = wallet.credits;
+    let startTimeStr = activeSession.start_time;
+    if (!startTimeStr.endsWith('Z') && !startTimeStr.includes('+')) {
+      startTimeStr = startTimeStr.replace(' ', 'T') + 'Z';
+    }
+    const startTime = new Date(startTimeStr).getTime();
+    const elapsedSeconds = Math.max(0, Math.floor((Date.now() - startTime) / 1000));
     const cost = Math.round(elapsedSeconds * CREDITS_PER_SECOND);
     
     const finalCost = Math.min(actualCredits, cost);
@@ -22,8 +27,14 @@ async function closeActiveSession(userId, activeSession) {
         end_time: new Date(), cost: finalCost, seconds_used: elapsedSeconds, status: 'ended'
       }).eq('id', activeSession.id).eq('status', 'active');
 
-    await supabaseAdmin
-      .from('wallets').update({ credits: newCredits }).eq('user_id', userId);
+    const updatedWallet = await updateWalletCredits(userId, newCredits);
+    logCreditUpdate({
+      userId,
+      before: actualCredits,
+      after: updatedWallet.credits,
+      change: -finalCost,
+      source: 'session-end',
+    });
 
     if (finalCost > 0) {
       await supabaseAdmin.from('transactions').insert({
@@ -31,8 +42,9 @@ async function closeActiveSession(userId, activeSession) {
       });
     }
 
-    return { success: true, deducted: finalCost, remainingCredits: newCredits };
+    return { success: true, deducted: finalCost, remainingCredits: updatedWallet.credits };
   } catch (err) {
+    console.error('Failed to close session:', err);
     return { success: false, message: 'Internal error closing session' };
   }
 }
@@ -59,6 +71,7 @@ export default async function handler(req, res) {
     const endResult = await closeActiveSession(userId, activeSession);
     res.status(endResult.success ? 200 : 500).json(endResult);
   } catch (error) {
+    console.error('End session error:', error);
     res.status(500).json({ success: false, message: 'Internal server error' });
   }
 }

@@ -52,4 +52,12 @@
   .shadow-card {
     box-shadow: 0 10px 40px -10px rgba(0, 0, 0, 0.4), 0 0 0 1px rgba(255, 255, 255, 0.05);
   }
+
+  .app-region-drag {
+    -webkit-app-region: drag;
+  }
+  
+  .app-region-no-drag {
+    -webkit-app-region: no-drag;
+  }
 }

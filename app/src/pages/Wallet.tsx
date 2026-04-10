@@ -1,11 +1,10 @@
 import { useState } from 'react';
-import { ArrowDownLeft, ArrowUpRight, Plus, Loader2, ExternalLink } from 'lucide-react';
+import { ArrowDownLeft, ArrowUpRight, Plus, ExternalLink, LogOut } from 'lucide-react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Separator } from '@/components/ui/separator';
 import { Button } from '@/components/ui/button';
 import { useApp } from '@/context/AppContext';
 import { useAuth } from '@/context/AuthContext';
-import { apiFetch } from '@/lib/api-client';
 import { toast } from 'sonner';
 import { PaymentModal } from '@/components/PaymentModal';
 
@@ -15,16 +14,15 @@ const CREDIT_PLANS = [
   { credits: 2000, priceNGN: 74000 },
   { credits: 5000, priceNGN: 185000 },
 ];
+
 const CREDITS_PER_SECOND = 2;
 
 function Wallet() {
-  const { credits, transactions, addCredits } = useApp();
-  const { user } = useAuth();
+  const { credits, transactions } = useApp();
+  const { user, logout } = useAuth();
   const [selectedPlan, setSelectedPlan] = useState<typeof CREDIT_PLANS[0] | null>(null);
   const [isPaymentModalOpen, setIsPaymentModalOpen] = useState(false);
-  const [isProcessing, setIsProcessing] = useState(false);
   const [showFundModal, setShowFundModal] = useState(false);
-
 
   const remainingSeconds = Math.floor(credits / CREDITS_PER_SECOND);
 
@@ -33,28 +31,43 @@ function Wallet() {
       toast.error('Please log in to buy credits.');
       return;
     }
+
     if (!selectedPlan) {
       toast.error('Please select a credit package.');
       return;
     }
+
     setIsPaymentModalOpen(true);
   };
 
   return (
     <div className="max-w-[800px]">
-      <div className="mb-8">
-        <h1 className="text-3xl font-bold text-white mb-2 tracking-tight">Credits</h1>
-        <p className="text-sm text-[#a1a1aa]">Manage your credits, estimate stream time, and review transactions</p>
+      <div className="mb-8 flex items-start justify-between">
+        <div>
+          <h1 className="text-3xl font-bold text-white mb-2 tracking-tight">Credits</h1>
+          <p className="text-sm text-[#a1a1aa]">Manage your credits, estimate stream time, and review transactions</p>
+        </div>
+        <Button
+          onClick={logout}
+          variant="ghost"
+          className="flex items-center gap-2 text-[#71717a] hover:text-red-400 hover:bg-red-500/10 border border-transparent hover:border-red-500/20 rounded-xl transition-all px-4 h-10"
+        >
+          <LogOut className="w-4 h-4" />
+          <span className="text-sm font-medium">Logout</span>
+        </Button>
       </div>
 
-      {/* Credits Card */}
       <Card className="bg-gradient-to-br from-[#131316] to-[#0f0f10] border-[#1f1f23] overflow-hidden rounded-2xl shadow-2xl shadow-black/20 mb-6">
         <CardHeader className="pb-4 border-b border-[#1f1f23]">
           <CardTitle className="text-sm font-medium text-[#71717a]">Available Credits</CardTitle>
         </CardHeader>
         <CardContent className="p-6">
-          <p className="text-4xl font-semibold text-white mb-6 animate-pulse">{Math.round(credits).toLocaleString()} <span className="text-xl text-[#71717a]">Credits</span></p>
-          <p className="text-sm text-[#71717a] mb-6">Estimated remaining stream time: {Math.floor(remainingSeconds / 60)}m {remainingSeconds % 60}s</p>
+          <p className="text-4xl font-semibold text-white mb-6 animate-pulse">
+            {Math.round(credits).toLocaleString()} <span className="text-xl text-[#71717a]">Credits</span>
+          </p>
+          <p className="text-sm text-[#71717a] mb-6">
+            Estimated remaining stream time: {Math.floor(remainingSeconds / 60)}m {remainingSeconds % 60}s
+          </p>
           <Button
             onClick={() => setShowFundModal(!showFundModal)}
             className="h-11 px-6 bg-blue-600 hover:bg-blue-500 text-white font-semibold rounded-xl shadow-lg shadow-blue-500/20 transition-all hover:scale-[1.02]"
@@ -66,14 +79,12 @@ function Wallet() {
         </CardContent>
       </Card>
 
-      {/* Credit Purchase Panel */}
       {showFundModal && (
         <Card className="bg-gradient-to-br from-[#131316] to-[#0f0f10] border-[#1f1f23] overflow-hidden rounded-2xl shadow-2xl shadow-black/20 mb-6 animate-in slide-in-from-top-2 duration-200">
           <CardHeader className="pb-4 border-b border-[#1f1f23]">
             <CardTitle className="text-sm font-medium text-[#71717a]">Buy Credits</CardTitle>
           </CardHeader>
           <CardContent className="p-6">
-            {/* Preset amounts */}
             <label className="block text-xs font-medium text-[#a1a1aa] mb-3">Select Package</label>
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 mb-6">
               {CREDIT_PLANS.map((plan) => (
@@ -90,49 +101,36 @@ function Wallet() {
                     <span className={`text-lg font-bold ${selectedPlan?.credits === plan.credits ? 'text-blue-400' : 'text-white'}`}>
                       {plan.credits.toLocaleString()} Credits
                     </span>
-                    <span className="text-sm text-[#a1a1aa] mt-1">₦{plan.priceNGN.toLocaleString()}</span>
+                    <span className="text-sm text-[#a1a1aa] mt-1">NGN {plan.priceNGN.toLocaleString()}</span>
                   </div>
                 </button>
               ))}
             </div>
 
-            {/* Pay button */}
             <Button
               onClick={handleFundWallet}
-              disabled={isProcessing || !selectedPlan}
+              disabled={!selectedPlan}
               className="w-full h-12 bg-gradient-to-r from-blue-600 to-blue-500 hover:from-blue-500 hover:to-blue-400 text-white font-bold rounded-xl shadow-lg shadow-blue-500/30 transition-all hover:scale-[1.01] disabled:opacity-50 disabled:hover:scale-100"
               id="proceed-payment-btn"
             >
-              {isProcessing ? (
-                <>
-                  <Loader2 className="w-5 h-5 animate-spin mr-2" />
-                  Initializing...
-                </>
-              ) : (
-                <>
-                  <ExternalLink className="w-4 h-4 mr-2" />
-                  Pay {selectedPlan ? `₦${selectedPlan.priceNGN.toLocaleString()}` : 'with Flutterwave'}
-                </>
-              )}
+              <ExternalLink className="w-4 h-4 mr-2" />
+              Pay {selectedPlan ? `NGN ${selectedPlan.priceNGN.toLocaleString()}` : 'with Flutterwave'}
             </Button>
 
             <p className="text-xs text-[#52525b] text-center mt-3">
-              You'll be redirected to Flutterwave's secure payment page
+              You&apos;ll be redirected to Flutterwave&apos;s secure payment page
             </p>
           </CardContent>
         </Card>
       )}
 
-      {/* Transaction History */}
       <Card className="bg-gradient-to-br from-[#131316] to-[#0f0f10] border-[#1f1f23] overflow-hidden rounded-2xl shadow-2xl shadow-black/20">
         <CardHeader className="pb-4 border-b border-[#1f1f23]">
           <CardTitle className="text-sm font-medium text-[#71717a]">Transaction History</CardTitle>
         </CardHeader>
         <CardContent>
           {transactions.length === 0 ? (
-            <div className="text-center py-8 text-[#71717a]">
-              No transactions found.
-            </div>
+            <div className="text-center py-8 text-[#71717a]">No transactions found.</div>
           ) : (
             <div className="space-y-4 pt-4">
               {transactions.map((tx, index) => (
@@ -150,14 +148,14 @@ function Wallet() {
                         <p className="text-sm font-medium text-white">
                           {tx.description || (tx.type === 'credit' ? 'Credits purchased' : 'Stream usage')}
                         </p>
-                        <p className="text-xs text-[#71717a]">
-                          {new Date(tx.timestamp).toLocaleString()}
-                        </p>
+                        <p className="text-xs text-[#71717a]">{new Date(tx.timestamp).toLocaleString()}</p>
                       </div>
                     </div>
                     <div className="text-right">
                       <p className={`text-sm font-semibold ${tx.type === 'credit' ? 'text-emerald-500' : 'text-red-500'}`}>
-                        {tx.type === 'debit' ? '-' : '+'}{(tx.credits || 0).toLocaleString()} Credits
+                        {typeof tx.credits === 'number' && Number.isFinite(tx.credits)
+                          ? `${tx.type === 'debit' ? '-' : '+'}${tx.credits.toLocaleString()} Credits`
+                          : 'Credits unavailable'}
                       </p>
                       <p className="text-xs text-[#71717a]">Completed</p>
                     </div>
@@ -170,13 +168,13 @@ function Wallet() {
         </CardContent>
       </Card>
 
-      <PaymentModal 
-        isOpen={isPaymentModalOpen} 
+      <PaymentModal
+        isOpen={isPaymentModalOpen}
         onClose={() => {
           setIsPaymentModalOpen(false);
           setShowFundModal(false);
-        }} 
-        plan={selectedPlan} 
+        }}
+        plan={selectedPlan}
       />
     </div>
   );

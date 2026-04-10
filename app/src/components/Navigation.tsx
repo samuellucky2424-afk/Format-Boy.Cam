@@ -1,6 +1,6 @@
-import type { ReactNode, ComponentType } from 'react';
+import { useState, useEffect, type ReactNode, type ComponentType } from 'react';
 import { NavLink } from 'react-router-dom';
-import { ChevronDown, LogOut, CreditCard, Coins, LayoutDashboard, Settings } from 'lucide-react';
+import { ChevronDown, LogOut, CreditCard, Coins, LayoutDashboard, Settings, Minus, Square, X } from 'lucide-react';
 import { Avatar, AvatarFallback } from '@/components/ui/avatar';
 import { Separator } from '@/components/ui/separator';
 import { useAuth } from '@/context/AuthContext';
@@ -20,6 +20,18 @@ interface NavItem {
 export function Navigation({ children }: NavigationProps) {
   const { user, logout } = useAuth();
   const { credits, sessionStatus } = useApp();
+  const [isElectron, setIsElectron] = useState(false);
+
+  useEffect(() => {
+    setIsElectron(typeof (window as any).require !== 'undefined');
+  }, []);
+
+  const handleWindowControl = (action: 'minimize' | 'maximize' | 'close') => {
+    if (typeof (window as any).require !== 'undefined') {
+      const { ipcRenderer } = (window as any).require('electron');
+      ipcRenderer.send(`window-${action}`);
+    }
+  };
 
   const navItems: NavItem[] = [
     { path: ROUTES.PROTECTED.DASHBOARD, label: 'Dashboard', icon: LayoutDashboard },
@@ -47,9 +59,9 @@ export function Navigation({ children }: NavigationProps) {
 
   return (
     <div className="min-h-screen bg-[#09090b]">
-      <header className="h-16 border-b border-[#18181b] bg-[#09090b]/80 backdrop-blur-2xl sticky top-0 z-50">
-        <div className="h-full max-w-[1600px] mx-auto px-6 flex items-center justify-between">
-          <div className="flex items-center gap-3">
+      <header className="h-16 border-b border-[#18181b] bg-[#09090b]/80 backdrop-blur-2xl sticky top-0 z-50 flex items-center pr-2 app-region-drag">
+        <div className="h-full w-full max-w-[1600px] mx-auto px-6 flex items-center justify-between">
+          <div className="flex items-center gap-3 app-region-no-drag">
             <NavLink to={ROUTES.PROTECTED.DASHBOARD} className="flex items-center gap-3">
               <div className="w-10 h-10 rounded-xl overflow-hidden shadow-lg shadow-blue-500/20 hover:shadow-blue-500/30 transition-all duration-300 hover:scale-105">
                 <img src="./logo.png" alt="Logo" className="w-full h-full object-cover" />
@@ -61,7 +73,7 @@ export function Navigation({ children }: NavigationProps) {
             </NavLink>
           </div>
 
-          <nav className="flex items-center gap-1.5">
+          <nav className="flex items-center gap-1.5 app-region-no-drag">
             {navItems.map(({ path, label, icon: Icon }) => (
               <NavLink
                 key={path}
@@ -75,7 +87,7 @@ export function Navigation({ children }: NavigationProps) {
             ))}
           </nav>
 
-          <div className="flex items-center gap-4">
+          <div className="flex items-center gap-4 app-region-no-drag">
             <div className={`flex items-center gap-2 px-4 py-2 rounded-xl border transition-all duration-200 ${
               sessionStatus === 'LIVE'
                 ? 'bg-red-500/10 border-red-500/30'
@@ -126,6 +138,35 @@ export function Navigation({ children }: NavigationProps) {
             </div>
           </div>
         </div>
+
+        {isElectron && (
+          <div className="flex items-center self-stretch ml-4 app-region-no-drag">
+            <button
+              title="Minimize"
+              aria-label="Minimize"
+              onClick={() => handleWindowControl('minimize')}
+              className="p-3 text-[#71717a] hover:text-white hover:bg-[#18181b] transition-colors focus:outline-none"
+            >
+              <Minus className="w-4 h-4" />
+            </button>
+            <button
+              title="Maximize"
+              aria-label="Maximize"
+              onClick={() => handleWindowControl('maximize')}
+              className="p-3 text-[#71717a] hover:text-white hover:bg-[#18181b] transition-colors focus:outline-none"
+            >
+              <Square className="w-3.5 h-3.5" />
+            </button>
+            <button
+              title="Close"
+              aria-label="Close"
+              onClick={() => handleWindowControl('close')}
+              className="p-3 text-[#71717a] hover:text-white hover:bg-red-500 transition-colors focus:outline-none rounded-tr-lg"
+            >
+              <X className="w-4 h-4" />
+            </button>
+          </div>
+        )}
       </header>
 
       <main className="max-w-[1600px] mx-auto px-6 py-8">

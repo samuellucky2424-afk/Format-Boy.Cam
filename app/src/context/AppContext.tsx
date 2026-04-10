@@ -1,6 +1,7 @@
 import { createContext, useContext, useState, useCallback, useMemo, useEffect } from 'react';
 import type { ReactNode } from 'react';
-import { apiFetch } from '@/lib/api-client';
+import { apiFetch, isAbortError } from '@/lib/api-client';
+import { isFiniteNumber } from '@/lib/utils';
 import { useAuth } from './AuthContext';
 
 export interface Transaction {
@@ -15,8 +16,7 @@ export interface Transaction {
 interface AppContextType {
   credits: number;
   setCredits: (credits: number) => void;
-  addCredits: (credits: number) => void;
-  deductCredits: (credits: number) => void;
+  refreshCredits: () => Promise<void>;
   sessionStatus: 'LIVE' | 'IDLE';
   setSessionStatus: (status: 'LIVE' | 'IDLE') => void;
   isLoading: boolean;
@@ -48,71 +48,68 @@ export function AppProvider({ children }: { children: ReactNode }) {
   const [transactions, setTransactions] = useState<Transaction[]>([]);
   const [notifications, setNotifications] = useState<Notification[]>([]);
 
-  useEffect(() => {
-    if (user?.id) {
-      apiFetch(`/credits?userId=${user.id}`)
-        .then(async res => {
-          if (!res.ok) {
-            throw new Error(`API returned ${res.status}`);
-          }
-          const text = await res.text();
-          try {
-            return JSON.parse(text);
-          } catch (e) {
-            throw new Error(`Invalid JSON format from API: ${text.substring(0, 20)}`);
-          }
-        })
-        .then(data => {
-          if (data && data.credits !== undefined) {
-            setCreditsState(data.credits);
-            setTransactions(data.transactions || []);
-          }
-        })
-        .catch(err => console.warn('Failed to sync credits from backend:', err));
+  const loadCredits = useCallback(async (signal?: AbortSignal) => {
+    if (!user?.id) {
+      return;
+    }
+
+    const response = await apiFetch(`/credits?userId=${user.id}`, {
+      signal,
+      timeoutMs: 20_000,
+    });
+
+    if (!response.ok) {
+      throw new Error(`API returned ${response.status}`);
+    }
+
+    const text = await response.text();
+    let data: unknown;
+
+    try {
+      data = JSON.parse(text);
+    } catch {
+      throw new Error(`Invalid JSON format from API: ${text.substring(0, 20)}`);
+    }
+
+    if (!data || typeof data !== 'object' || !isFiniteNumber((data as { credits?: unknown }).credits)) {
+      console.error('Invalid credit response', data);
+      throw new Error('Invalid credits value');
+    }
+
+    const nextCredits = Math.max(0, (data as { credits: number }).credits);
+    setCreditsState(nextCredits);
+
+    if (Array.isArray((data as { transactions?: unknown }).transactions)) {
+      setTransactions((data as { transactions: Transaction[] }).transactions);
+    } else if ((data as { transactions?: unknown }).transactions !== undefined) {
+      console.error('Invalid transactions response', data);
     }
   }, [user?.id]);
 
+  const refreshCredits = useCallback(async () => {
+    await loadCredits();
+  }, [loadCredits]);
+
+  useEffect(() => {
+    if (!user?.id) return;
+
+    const controller = new AbortController();
+
+    loadCredits(controller.signal)
+      .catch(err => {
+        if (isAbortError(err)) return;
+        console.warn('Failed to sync credits from backend:', err);
+      });
+
+    return () => controller.abort();
+  }, [loadCredits, user?.id]);
 
   const setCredits = useCallback((newCredits: number) => {
-    setCreditsState(Math.max(0, newCredits || 0));
-  }, []);
+    if (!isFiniteNumber(newCredits)) {
+      throw new Error('Invalid credits value');
+    }
 
-  const addCredits = useCallback((amount: number) => {
-    const transaction: Transaction = {
-      id: `tx_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
-      type: 'credit',
-      amount: 0,
-      credits: amount,
-      description: 'Credits purchased',
-      timestamp: new Date().toISOString(),
-    };
-
-    setCreditsState(prev => Math.max(0, prev + amount));
-
-    setTransactions(prev => {
-      const updated = [transaction, ...prev].slice(0, 50);
-      localStorage.setItem(TRANSACTIONS_KEY, JSON.stringify(updated));
-      return updated;
-    });
-  }, []);
-
-  const deductCredits = useCallback((amount: number) => {
-    const transaction: Transaction = {
-      id: `tx_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
-      type: 'debit',
-      amount: 0,
-      credits: amount,
-      description: 'Session usage',
-      timestamp: new Date().toISOString(),
-    };
-
-    setCreditsState(prev => Math.max(0, prev - amount));
-
-    setTransactions(prev => {
-      const updated = [transaction, ...prev].slice(0, 50);
-      localStorage.setItem(TRANSACTIONS_KEY, JSON.stringify(updated));
-      return updated;
-    });
+    setCreditsState(Math.max(0, newCredits));
   }, []);
 
   const addTransaction = useCallback((transactionData: Omit<Transaction, 'id' | 'timestamp'>) => {
@@ -153,8 +150,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
   const value = useMemo(() => ({
     credits,
     setCredits,
-    addCredits,
-    deductCredits,
+    refreshCredits,
     sessionStatus,
     setSessionStatus,
     isLoading,
@@ -164,8 +160,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
     notifications,
     addNotification,
     clearNotifications,
-  }), [credits, setCredits, addCredits, deductCredits, sessionStatus, isLoading, transactions, addTransaction, notifications, addNotification, clearNotifications]);
-
+  }), [credits, setCredits, refreshCredits, sessionStatus, isLoading, transactions, addTransaction, notifications, addNotification, clearNotifications]);
 
   return (
     <AppContext.Provider value={value}>

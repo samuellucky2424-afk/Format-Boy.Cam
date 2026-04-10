@@ -1,6 +1,7 @@
 import React, { createContext, useContext, useState, useEffect, useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { ROUTES } from '@/lib/routes';
+import { buildGoogleCallbackPath, buildHashRouteUrl } from '@/lib/auth';
 import { supabase } from '@/lib/supabase';
 import type { User as SupabaseUser } from '@supabase/supabase-js';
 
@@ -19,12 +20,52 @@ interface AuthContextType {
   login: (email: string, password: string) => Promise<void>;
   logout: () => void;
   register: (email: string, name: string, password: string) => Promise<void>;
+  signInWithGoogle: (redirectPath?: string) => Promise<void>;
   loading: boolean;
   error: string | null;
   clearError: () => void;
 }
 
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
+const GOOGLE_AUTH_POPUP_NAME = 'format-boy-google-auth';
+const GOOGLE_AUTH_POPUP_WIDTH = 520;
+const GOOGLE_AUTH_POPUP_HEIGHT = 720;
+
+function openCenteredPopup(): Window | null {
+  if (typeof window === 'undefined') {
+    return null;
+  }
+
+  const left = Math.max(0, window.screenX + Math.round((window.outerWidth - GOOGLE_AUTH_POPUP_WIDTH) / 2));
+  const top = Math.max(0, window.screenY + Math.round((window.outerHeight - GOOGLE_AUTH_POPUP_HEIGHT) / 2));
+  const features = [
+    `width=${GOOGLE_AUTH_POPUP_WIDTH}`,
+    `height=${GOOGLE_AUTH_POPUP_HEIGHT}`,
+    `left=${left}`,
+    `top=${top}`,
+    'popup=yes',
+    'resizable=yes',
+    'scrollbars=yes',
+  ].join(',');
+
+  return window.open('', GOOGLE_AUTH_POPUP_NAME, features);
+}
+
+function renderPopupLoadingState(popup: Window): void {
+  try {
+    popup.document.title = 'Continue with Google';
+    popup.document.body.innerHTML = `
+      <div style="margin:0;min-height:100vh;display:flex;align-items:center;justify-content:center;background:#111827;color:#f9fafb;font-family:Arial,sans-serif;">
+        <div style="text-align:center;padding:24px;">
+          <div style="font-size:16px;font-weight:600;margin-bottom:8px;">Connecting to Google</div>
+          <div style="font-size:13px;color:#9ca3af;">Please finish sign in in this popup.</div>
+        </div>
+      </div>
+    `;
+  } catch {
+    // Ignore popup document write failures and continue with auth redirect.
+  }
+}
 
 export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [user, setUser] = useState<User | null>(null);
@@ -36,9 +77,9 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const formatUser = (su: SupabaseUser): User => {
     return {
       id: su.id,
-      name: su.user_metadata?.name || su.email?.split('@')[0] || 'User',
+      name: su.user_metadata?.name || su.user_metadata?.full_name || su.email?.split('@')[0] || 'User',
       email: su.email || '',
-      avatar: su.user_metadata?.avatar_url,
+      avatar: su.user_metadata?.avatar_url || su.user_metadata?.picture,
       createdAt: su.created_at,
     };
   };
@@ -99,7 +140,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     }
   };
 
-  const register = async (email: string, name: string, password: string) => {
+    const register = async (email: string, name: string, password: string) => {
     setLoading(true);
     setError(null);
     
@@ -108,13 +149,14 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         throw new Error('Name must be at least 2 characters');
       }
 
-      const { error: authError } = await supabase.auth.signUp({
+      const { data, error: authError } = await supabase.auth.signUp({
         email,
         password,
         options: {
           data: {
             name: name.trim(),
-          }
+          },
+          emailRedirectTo: buildHashRouteUrl(ROUTES.PUBLIC.LOGIN),
         }
       });
 
@@ -122,10 +164,75 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         throw authError;
       }
       
-      // Navigate on success. If email confirmations are required, you may want to redirect to a 'verify email' page instead.
-      navigate(ROUTES.DEFAULT, { replace: true });
+      // If user is created and confirmed (no email confirmation required), auto sign in
+      if (data.user && data.user.confirmed_at) {
+        // Auto sign in the user
+        const { error: signInError } = await supabase.auth.signInWithPassword({
+          email,
+          password,
+        });
+        
+        if (signInError) {
+          throw signInError;
+        }
+        
+        navigate(ROUTES.DEFAULT, { replace: true });
+      } else if (data.user) {
+        // Email confirmation is required
+        setError(null);
+        // Still navigate but user may need to confirm email
+        // Optionally redirect to a verification page instead
+        navigate(ROUTES.DEFAULT, { replace: true });
+      }
     } catch (err: any) {
       const message = err.message || 'Registration failed';
+      setError(message);
+      throw err;
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const signInWithGoogle = async (redirectPath: string = ROUTES.DEFAULT) => {
+    setLoading(true);
+    setError(null);
+    const popup = openCenteredPopup();
+    const callbackUrl = buildHashRouteUrl(buildGoogleCallbackPath(redirectPath, true));
+
+    try {
+      if (!popup) {
+        throw new Error('Google sign-in popup was blocked. Please allow popups and try again.');
+      }
+
+      renderPopupLoadingState(popup);
+
+      const { data, error: authError } = await supabase.auth.signInWithOAuth({
+        provider: 'google',
+        options: {
+          redirectTo: callbackUrl,
+          queryParams: {
+            access_type: 'offline',
+            prompt: 'consent',
+          },
+          skipBrowserRedirect: true,
+        },
+      });
+
+      if (authError) {
+        throw authError;
+      }
+
+      if (!data?.url) {
+        throw new Error(
+          `Google OAuth did not return a redirect URL. Confirm ${callbackUrl} is allowed in Supabase Auth URL Configuration and your Supabase callback URL is configured in Google Cloud.`
+        );
+      }
+
+      popup.location.href = data.url;
+      popup.focus();
+    } catch (err: any) {
+      popup?.close();
+      const message = err.message || 'Google sign in failed';
       setError(message);
       throw err;
     } finally {
@@ -154,6 +261,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       login, 
       logout, 
       register, 
+      signInWithGoogle,
       loading, 
       error,
       clearError 
