@@ -189,11 +189,29 @@ ipcMain.on('open-auth-popup', (_event, authUrl) => {
     authWindow.show();
   });
 
-  // Intercept formatboy:// deep links during auth to complete the sign-in process
+  // Intercept deep links or web callbacks eagerly to complete the sign-in process
   const filterDeepLink = (event, url) => {
     if (url.startsWith('formatboy://')) {
       event.preventDefault();
       handleOAuthDeepLink(url);
+      authWindow.close();
+      return;
+    }
+
+    // Fallback: Aggressively intercept the Vercal callback url to prevent blank screen hangs
+    if ((url.includes('format-boy-cam.vercel.app') || url.includes('localhost')) && (url.includes('code=') || url.includes('access_token='))) {
+      event.preventDefault();
+
+      let code = null;
+      const codeMatch = url.match(/[?&#]code=([^&#]+)/);
+      if (codeMatch) code = codeMatch[1];
+
+      if (code) {
+        const nextMatch = url.match(/[?&#]next=([^&#]+)/);
+        const next = nextMatch ? nextMatch[1] : '/dashboard';
+        const deepLink = `formatboy://auth/callback?code=${code}&next=${next}`;
+        handleOAuthDeepLink(deepLink);
+      }
       authWindow.close();
     }
   };
