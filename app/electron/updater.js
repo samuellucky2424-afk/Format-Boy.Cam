@@ -343,7 +343,7 @@ async function installDownloadedUpdate() {
       message: 'Installing update and restarting Format-Boy Cam...',
     });
 
-    const spawnArguments = ['/S', '--updated'];
+    const spawnArguments = [];
     const updaterProcess = spawn(updateState.downloadedFilePath, spawnArguments, {
       detached: true,
       stdio: 'ignore',
@@ -353,7 +353,7 @@ async function installDownloadedUpdate() {
 
     setTimeout(() => {
       app.quit();
-    }, 300);
+    }, 1500);
 
     return serializeState();
   })()
@@ -497,7 +497,7 @@ export async function downloadUpdate(manifestOverride = null, { autoInstall = fa
 
 export function registerUpdaterIpc() {
   ipcMain.handle('updater:get-state', async () => serializeState());
-  ipcMain.handle('updater:check', async () => checkForUpdates({ silent: false, autoDownload: true, autoInstall: true }));
+  ipcMain.handle('updater:check', async () => checkForUpdates({ silent: false, autoDownload: true, autoInstall: false }));
   ipcMain.handle('updater:install', async () => installDownloadedUpdate());
 }
 

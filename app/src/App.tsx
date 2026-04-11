@@ -12,6 +12,7 @@ import { ROUTES } from '@/lib/routes';
 
 const Login = lazy(() => import('@/pages/Login'));
 const AuthCallback = lazy(() => import('@/pages/AuthCallback'));
+import { UpdateModal } from '@/components/UpdateModal';
 const Dashboard = lazy(() => import('@/pages/Dashboard'));
 const PreviewWindow = lazy(() => import('@/pages/PreviewWindow'));
 const Wallet = lazy(() => import('@/pages/Wallet'));
@@ -86,6 +87,7 @@ function App() {
                 </Routes>
               </Suspense>
               <Toaster />
+              <UpdateModal />
             </AppProvider>
           </UIProvider>
         </AuthProvider>
