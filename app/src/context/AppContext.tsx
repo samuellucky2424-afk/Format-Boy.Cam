@@ -53,7 +53,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
       return;
     }
 
-    const response = await apiFetch(`/credits?userId=${user.id}`, {
+    const response = await apiFetch(`/wallet?userId=${user.id}`, {
       signal,
       timeoutMs: 20_000,
     });

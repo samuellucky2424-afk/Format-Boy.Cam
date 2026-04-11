@@ -11,20 +11,8 @@ export default async function handler(req, res) {
   res.setHeader("Access-Control-Allow-Headers", "Content-Type, Authorization");
   
   if (req.method === 'OPTIONS') return res.status(200).end();
-  
-  // Actually, standardizing parameterized requests /api/session-status?userId=xxx because Vercel doesn't do /api/session-status/:userId by default without a rewrite.
-  // Wait, I will just accept ?userId=...
 
-export default async function handler(req, res) {
-  res.setHeader("Access-Control-Allow-Origin", "*");
-  res.setHeader("Access-Control-Allow-Methods", "GET, OPTIONS");
-  res.setHeader("Access-Control-Allow-Headers", "Content-Type, Authorization");
-  
-  if (req.method === 'OPTIONS') return res.status(200).end();
-  
-  // Actually, standardizing parameterized requests /api/session-status?userId=xxx because Vercel doesn't do /api/session-status/:userId by default without a rewrite.
-  // Wait, I will just accept ?userId=...
-  const userId = req.query.userId || req.query.id; 
+  const userId = req.query.userId || req.query.id;
 
   if (!userId) return res.status(400).json({ error: 'User ID is required' });
   if (!supabaseAdmin) return res.status(503).json({ error: supabaseAdminConfigError });
