@@ -114,8 +114,7 @@ function Subscription() {
               timeoutMs: 45_000,
             });
             const verifyData = await res.json();
-            console.error('VERIFY DATA RESPONSE:', verifyData);
-
+            
             if (verifyData.status === 'success') {
               if (!isFiniteNumber(verifyData.creditsAdded)) {
                 throw new Error('Invalid payment verification response');
@@ -262,16 +261,6 @@ function Subscription() {
 
         <div className="text-center">
           <p className="text-sm text-[#71717a] mb-4">All purchases are one-time. No subscriptions or hidden fees.</p>
-          
-          <div className="mt-8">
-            <Button 
-              variant="outline" 
-              className="border-[#27272a] text-[#a1a1aa] hover:text-white"
-              onClick={() => handleSelectPlan({ credits: 2, priceNGN: 100 })}
-            >
-              Test Payment System (₦100)
-            </Button>
-          </div>
         </div>
       </div>
 

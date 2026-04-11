@@ -3,7 +3,6 @@ import { supabaseAdmin, supabaseAdminConfigError } from '../supabase.js';
 import { requireWalletByUserId, logCreditUpdate, updateWalletCredits } from '../credit-utils.js';
 
 const CREDIT_PRICING = {
-  2: 100, // Test payment
   500: 14000,
   1000: 28000,
   2000: 56000,
