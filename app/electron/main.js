@@ -126,6 +126,13 @@ ipcMain.on('open-external', (_event, url) => {
   shell.openExternal(url);
 });
 
+// Toggle window ghost mode (exclude from screen capture)
+ipcMain.on('toggle-capture-protection', (_event, { isProtected }) => {
+  if (mainWindow && !mainWindow.isDestroyed()) {
+    mainWindow.setContentProtection(isProtected);
+  }
+});
+
 // macOS: deep link comes via open-url event
 app.on('open-url', (event, url) => {
   event.preventDefault();

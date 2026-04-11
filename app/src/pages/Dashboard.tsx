@@ -1,6 +1,6 @@
 import { useState, useRef, useEffect, useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Upload, Play, Square, Clock, Zap, Monitor, Plus, Coins, Minus, X, Settings } from 'lucide-react';
+import { Upload, Play, Square, Clock, Zap, Monitor, Plus, Coins, Minus, X, Settings, Eye, EyeOff } from 'lucide-react';
 import { toast } from 'sonner';
 import { useAuth } from '@/context/AuthContext';
 import { useApp } from '@/context/AppContext';
@@ -38,6 +38,7 @@ function Dashboard() {
   const navigate = useNavigate();
   const [isStreaming, setIsStreaming] = useState(false);
   const [isObsMode, setIsObsMode] = useState(false);
+  const [isGhostMode, setIsGhostMode] = useState(false);
   const [uploadedImage, setUploadedImage] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState(false);
     const [cameraDevices, setCameraDevices] = useState<MediaDeviceInfo[]>([]);
@@ -109,6 +110,22 @@ function Dashboard() {
 
     openObsPreviewWindow();
   }, [closeObsPreviewWindow, openObsPreviewWindow]);
+
+  const handleGhostModeToggle = useCallback(() => {
+    const newValue = !isGhostMode;
+    setIsGhostMode(newValue);
+    
+    if (typeof (window as any).require !== 'undefined') {
+      const { ipcRenderer } = (window as any).require('electron');
+      ipcRenderer.send('toggle-capture-protection', { isProtected: newValue });
+      
+      if (newValue) {
+        toast.success("Ghost Mode ON: App is now invisible to OBS Display Capture");
+      } else {
+        toast.info("Ghost Mode OFF: App is visible again");
+      }
+    }
+  }, [isGhostMode]);
 
   const handleWindowControl = (action: 'minimize' | 'maximize' | 'close') => {
     if (typeof (window as any).require !== 'undefined') {
@@ -580,8 +597,21 @@ function Dashboard() {
             </button>
 
              <button 
+               onClick={handleGhostModeToggle}
+               title={isGhostMode ? "Make app visible to OBS again" : "Hide app from OBS Screen Capture"}
+               className={`h-[34px] px-3.5 flex items-center gap-2 rounded-sm border transition-all ml-2 ${
+                 isGhostMode
+                   ? 'bg-[#2A1215] border-[#3C1318] text-[#EF4444]'
+                   : 'bg-[#1E1E1E] border-[#2A2A2A] text-[#737373] hover:text-[#A3A3A3]'
+               }`}
+             >
+               {isGhostMode ? <EyeOff className="w-3.5 h-3.5 opacity-80" /> : <Eye className="w-3.5 h-3.5 opacity-80" />}
+               <span className="font-medium text-[13px]">{isGhostMode ? 'Ghost Mode On' : 'Ghost Mode'}</span>
+             </button>
+
+             <button 
                onClick={() => fileInputRef.current?.click()}
-               className="h-[34px] px-3.5 flex items-center gap-2 rounded-sm border bg-[#1E1E1E] border-[#2A2A2A] text-[#737373] hover:text-[#A3A3A3] transition-all"
+               className="h-[34px] px-3.5 flex items-center gap-2 rounded-sm border bg-[#1E1E1E] border-[#2A2A2A] text-[#737373] hover:text-[#A3A3A3] transition-all ml-2"
              >
                <Upload className="w-3.5 h-3.5 opacity-80" />
                <span className="font-medium text-[13px]">{uploadedImage ? 'Change Image' : 'Upload Image'}</span>
