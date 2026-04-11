@@ -25,6 +25,7 @@ jobs:
         working-directory: ./app
         run: npm ci
 
+
       - name: Build app
         working-directory: ./app
         run: npm run electron:build

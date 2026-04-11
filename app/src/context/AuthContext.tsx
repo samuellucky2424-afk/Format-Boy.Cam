@@ -269,8 +269,8 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
           throw new Error('Google OAuth did not return a redirect URL.');
         }
 
-        // Open Google OAuth in the system default browser
-        ipcRenderer.send('open-external', data.url);
+        // Open Google OAuth within an Electron popup to avoid leaving the app
+        ipcRenderer.send('open-auth-popup', data.url);
       } catch (err: any) {
         const message = err.message || 'Google sign in failed';
         setError(message);

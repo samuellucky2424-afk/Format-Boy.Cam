@@ -162,9 +162,44 @@ ipcMain.on('window-close', () => {
   }
 });
 
-// Open a URL in the system default browser (used for Google OAuth)
+// Open a URL in the system default browser (used for generic links)
 ipcMain.on('open-external', (_event, url) => {
   shell.openExternal(url);
+});
+
+// Open a custom popup for Google OAuth authentication
+ipcMain.on('open-auth-popup', (_event, authUrl) => {
+  const authWindow = new BrowserWindow({
+    width: 600,
+    height: 750,
+    parent: mainWindow,
+    modal: true,
+    show: false,
+    webPreferences: {
+      nodeIntegration: false,
+      contextIsolation: true
+    }
+  });
+
+  // Spoof the User-Agent to bypass Google's "disallowed_useragent" block for Electron
+  const userAgent = authWindow.webContents.userAgent.replace(/\sElectron\/.+?(\s|$)/, ' ');
+  authWindow.loadURL(authUrl, { userAgent });
+
+  authWindow.once('ready-to-show', () => {
+    authWindow.show();
+  });
+
+  // Intercept formatboy:// deep links during auth to complete the sign-in process
+  const filterDeepLink = (event, url) => {
+    if (url.startsWith('formatboy://')) {
+      event.preventDefault();
+      handleOAuthDeepLink(url);
+      authWindow.close();
+    }
+  };
+
+  authWindow.webContents.on('will-navigate', filterDeepLink);
+  authWindow.webContents.on('will-redirect', filterDeepLink);
 });
 
 // macOS: deep link comes via open-url event
