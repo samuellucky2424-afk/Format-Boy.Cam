@@ -163,7 +163,7 @@ function Subscription() {
 
   return (
     <div className="min-h-screen bg-[#0f0f10] p-6 lg:p-12 flex flex-col items-center">
-      <div className="w-full max-w-[800px] pb-32">
+      <div className="w-full max-w-[1400px] pb-32">
         <div className="mb-8 flex items-center justify-between gap-3">
           <Button
             variant="ghost"
@@ -211,7 +211,7 @@ function Subscription() {
 
         <div className="mb-8">
           <label className="block text-sm font-medium text-[#a1a1aa] mb-3">Select Credits</label>
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
             {CREDIT_PLANS.map((plan) => {
               const isSelected = selectedPlan?.credits === plan.credits;
               const priceNGN = plan.priceNGN;
@@ -227,20 +227,20 @@ function Subscription() {
                   }`}
                 >
                   <div className="flex items-center gap-3 mb-3">
-                    <div
-                      className={`w-10 h-10 rounded-full flex items-center justify-center ${
+                     <div
+                      className={`w-10 h-10 rounded-full flex items-center justify-center shrink-0 ${
                         isSelected ? 'bg-blue-500/20' : 'bg-[#27272a]'
                       }`}
                     >
                       <Coins className={`w-5 h-5 ${isSelected ? 'text-blue-400' : 'text-[#71717a]'}`} />
                     </div>
                     <div>
-                      <span className="text-lg font-bold text-white">{plan.credits.toLocaleString()} Credits</span>
-                      <span className="text-xs text-[#71717a] ml-2">{formatTime(plan.credits)}</span>
+                      <span className="text-lg font-bold text-white leading-tight block">{plan.credits.toLocaleString()} Credits</span>
+                      <span className="text-xs text-[#71717a] block mt-0.5">{formatTime(plan.credits)}</span>
                     </div>
                   </div>
-                  <div className="flex items-center gap-2">
-                    <span className="text-xl font-bold text-white">₦{priceNGN.toLocaleString()}</span>
+                  <div className="flex items-center gap-2 mt-4">
+                     <span className="text-2xl font-bold text-white">₦{priceNGN.toLocaleString()}</span>
                   </div>
                 </button>
               );
@@ -265,7 +265,7 @@ function Subscription() {
 
       {selectedPlan && (
         <div className="fixed bottom-0 left-0 w-full bg-[#0f0f10]/90 backdrop-blur-md border-t border-[#27272a] p-4 flex justify-between items-center z-50 animate-in slide-in-from-bottom shadow-2xl">
-          <div className="max-w-[800px] mx-auto w-full flex items-center justify-between">
+          <div className="max-w-[1400px] mx-auto w-full flex items-center justify-between">
             <div className="flex flex-col">
               <span className="text-sm text-[#a1a1aa] font-medium">Selected Plan</span>
               <span className="text-xl font-bold text-white tracking-tight">
