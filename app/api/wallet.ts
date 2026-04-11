@@ -29,7 +29,7 @@ export default async function handler(req, res) {
       return res.status(500).json({ error: 'Failed to fetch credits' });
     }
 
-    const creditAccount = await getWalletByUserId(userId);
+    const creditAccount = await getWalletByUserId(userId, { createIfMissing: true });
     if (!creditAccount) {
       return res.status(404).json({ error: 'Wallet not found' });
     }

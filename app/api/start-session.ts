@@ -7,7 +7,7 @@ const MAX_SESSION_DURATION = 600;
 
 async function closeActiveSession(userId, activeSession) {
   try {
-    const wallet = await getWalletByUserId(userId);
+    const wallet = await getWalletByUserId(userId, { createIfMissing: true });
     if (!wallet) throw new Error('Wallet not found');
 
     const actualCredits = wallet.credits;
@@ -79,7 +79,7 @@ export default async function handler(req, res) {
       }
     }
 
-    const freshWallet = await getWalletByUserId(userId);
+    const freshWallet = await getWalletByUserId(userId, { createIfMissing: true });
     if (!freshWallet) {
       return res.status(404).json({ allowed: false, error: 'Wallet not found' });
     }

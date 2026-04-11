@@ -6,7 +6,7 @@ const CREDITS_PER_SECOND = 2;
 
 async function closeActiveSession(userId, activeSession) {
   try {
-    const wallet = await getWalletByUserId(userId);
+    const wallet = await getWalletByUserId(userId, { createIfMissing: true });
     if (!wallet) throw new Error('Wallet not found');
 
     const actualCredits = wallet.credits;
