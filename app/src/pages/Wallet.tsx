@@ -9,10 +9,10 @@ import { toast } from 'sonner';
 import { PaymentModal } from '@/components/PaymentModal';
 
 const CREDIT_PLANS = [
-  { credits: 500, priceNGN: 18500 },
-  { credits: 1000, priceNGN: 37000 },
-  { credits: 2000, priceNGN: 74000 },
-  { credits: 5000, priceNGN: 185000 },
+  { credits: 500, priceNGN: 14000 },
+  { credits: 1000, priceNGN: 28000 },
+  { credits: 2000, priceNGN: 56000 },
+  { credits: 5000, priceNGN: 140000 },
 ];
 
 const CREDITS_PER_SECOND = 2;

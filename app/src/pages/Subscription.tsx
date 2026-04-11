@@ -11,10 +11,10 @@ import { ROUTES } from '@/lib/routes';
 import { isFiniteNumber } from '@/lib/utils';
 
 const CREDIT_PLANS = [
-  { credits: 500, priceNGN: 18500 },
-  { credits: 1000, priceNGN: 37000 },
-  { credits: 2000, priceNGN: 74000 },
-  { credits: 5000, priceNGN: 185000 },
+  { credits: 500, priceNGN: 14000 },
+  { credits: 1000, priceNGN: 28000 },
+  { credits: 2000, priceNGN: 56000 },
+  { credits: 5000, priceNGN: 140000 },
 ];
 
 function formatTime(credits: number): string {
@@ -114,6 +114,8 @@ function Subscription() {
               timeoutMs: 45_000,
             });
             const verifyData = await res.json();
+            console.error('VERIFY DATA RESPONSE:', verifyData);
+
             if (verifyData.status === 'success') {
               if (!isFiniteNumber(verifyData.creditsAdded)) {
                 throw new Error('Invalid payment verification response');
@@ -143,7 +145,7 @@ function Subscription() {
             } else if (isAbortError(error)) {
               // Silently ignore abort errors (e.g. component unmount, navigation)
             } else {
-              console.error('Verification error:', error);
+              console.error('Verification error payload:', error);
               toast.error('Unable to verify payment automatically.');
             }
           } finally {
@@ -260,6 +262,16 @@ function Subscription() {
 
         <div className="text-center">
           <p className="text-sm text-[#71717a] mb-4">All purchases are one-time. No subscriptions or hidden fees.</p>
+          
+          <div className="mt-8">
+            <Button 
+              variant="outline" 
+              className="border-[#27272a] text-[#a1a1aa] hover:text-white"
+              onClick={() => handleSelectPlan({ credits: 2, priceNGN: 100 })}
+            >
+              Test Payment System (₦100)
+            </Button>
+          </div>
         </div>
       </div>
 
