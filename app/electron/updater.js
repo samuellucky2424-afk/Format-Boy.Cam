@@ -479,7 +479,8 @@ for ($index = 0; $index -lt 240; $index++) {
   Start-Sleep -Milliseconds 500
 }
 
-Start-Process -FilePath $InstallerPath -ArgumentList '/S' -Wait
+# Running without /S so that SmartScreen/UAC prompts are visible
+Start-Process -FilePath $InstallerPath -Wait
 Start-Process -FilePath $LaunchExe -WorkingDirectory $WorkingDirectory
 `;
 }

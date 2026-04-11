@@ -74,7 +74,7 @@ export default async function handler(req, res) {
       return res.status(200).json({
         version: gitHubRelease.version,
         download_url: gitHubRelease.downloadUrl,
-        artifact_type: 'portable',
+        artifact_type: 'installer',
         sha256: gitHubRelease.sha256 || undefined,
         notes: gitHubRelease.notes || undefined,
         file_name: gitHubRelease.fileName,
