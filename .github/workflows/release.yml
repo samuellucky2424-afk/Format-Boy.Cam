@@ -29,7 +29,7 @@ jobs:
         working-directory: ./app
         run: npm run electron:build
         env:
-          NODE_OPTIONS: --max-old-space-size=6144
+          NODE_OPTIONS: --max-old-space-size=4096
           VITE_API_BASE_URL: ${{ secrets.VITE_API_BASE_URL }}
           VITE_FLUTTERWAVE_PUBLIC_KEY: ${{ secrets.VITE_FLUTTERWAVE_PUBLIC_KEY }}
           VITE_SUPABASE_URL: ${{ secrets.VITE_SUPABASE_URL }}
@@ -39,13 +39,17 @@ jobs:
         id: find_exe
         shell: powershell
         run: |
-          $exe = Get-ChildItem -Path "./app/release" -Filter "*.exe" -Recurse | Where-Object { $_.Name -match "Format-Boy" } | Select-Object -First 1
+          Write-Host "Listing ./app/release folder:"
+          Get-ChildItem -Path "./app/release" -Recurse | Select-Object FullName | Format-List
+          $exe = Get-ChildItem -Path "./app/release" -Filter "*.exe" -Recurse | Where-Object { $_.Name -notmatch "blockmap" } | Select-Object -First 1
           if ($exe) {
-            echo "exe_path=$($exe.FullName)" >> $env:GITHUB_OUTPUT
+            $relativePath = "app/release/$($exe.Name)"
+            echo "exe_path=$relativePath" >> $env:GITHUB_OUTPUT
             echo "exe_name=$($exe.Name)" >> $env:GITHUB_OUTPUT
-            Write-Host "Found executable: $($exe.FullName)"
+            Write-Host "Found executable: $relativePath"
           } else {
             Write-Host "No executable found in ./app/release"
+            Get-ChildItem -Path "./app/release" -Recurse | Format-List
             exit 1
           }
 
