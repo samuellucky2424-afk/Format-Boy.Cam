@@ -512,9 +512,22 @@ function Dashboard() {
           />
 
          {!isStreaming && (
-            <div className="flex flex-col items-center justify-center text-[#3F3F46] gap-5">
-               <Monitor className="w-[50px] h-[50px] stroke-[1]" />
-               <span className="text-xs font-semibold tracking-[0.2em] text-[#4A4A4A]">CAMERA FEED OFFLINE</span>
+            <div className="flex flex-col items-center justify-center gap-6 p-8">
+               <div className="w-16 h-16 rounded-2xl bg-[#1a1a1a] border border-[#2a2a2a] flex items-center justify-center overflow-hidden shadow-lg">
+                 <img src="./logo.png" alt="Logo" className="w-full h-full object-cover" />
+               </div>
+               <div className="flex flex-col items-center gap-2">
+                 <h2 className="text-lg font-semibold text-[#e5e5e5]">
+                   {user?.name ? `Welcome, ${user.name}` : 'Welcome to Format-Boy'}
+                 </h2>
+                 <p className="text-sm text-[#71717a] text-center max-w-xs">
+                   Click <span className="text-[#22C55E] font-semibold">Start</span> below to begin your AI-powered camera session
+                 </p>
+               </div>
+               <div className="flex items-center gap-2 mt-2 px-4 py-2 rounded-md bg-[#111111] border border-[#222222]">
+                 <Monitor className="w-4 h-4 text-[#525252]" />
+                 <span className="text-xs font-medium tracking-wider text-[#525252] uppercase">Camera Feed Offline</span>
+               </div>
             </div>
          )}
          
@@ -546,11 +559,9 @@ function Dashboard() {
             </button>
 
             <button 
-              onClick={() => {
-                void handleStop();
-              }}
+              onClick={() => { void handleStop(); }}
               disabled={!isStreaming}
-              className={`h-[34px] px-3.5 flex items-center gap-2 rounded-sm border bg-[#1E1E1E] border-[#2A2A2A] text-[#737373] hover:text-[#A3A3A3] transition-all`}
+              className="h-[34px] px-3.5 flex items-center gap-2 rounded-sm border bg-[#1E1E1E] border-[#2A2A2A] text-[#737373] hover:text-[#A3A3A3] transition-all"
             >
               <Square className="w-3.5 h-3.5 fill-current opacity-70" />
               <span className="font-medium text-[13px]">Stop</span>
@@ -590,8 +601,6 @@ function Dashboard() {
                 ))}
               </select>
             )}
-
-            
          </div>
 
          <div className="flex items-center h-full">
@@ -645,3 +654,4 @@ function Dashboard() {
 }
 
 export default Dashboard;
+

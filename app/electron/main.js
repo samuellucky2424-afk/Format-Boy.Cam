@@ -1,4 +1,4 @@
-import { app, BrowserWindow, systemPreferences, ipcMain } from 'electron';
+import { app, BrowserWindow, systemPreferences, ipcMain, shell } from 'electron';
 import path from 'path';
 import { fileURLToPath } from 'url';
 import dotenv from 'dotenv';
@@ -9,6 +9,35 @@ const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 let mainWindow = null;
 
+// Register custom protocol for OAuth deep links (must be before app.ready)
+app.setAsDefaultProtocolClient('formatboy');
+
+// Enforce single instance so deep link callbacks work on Windows
+const gotTheLock = app.requestSingleInstanceLock();
+
+function handleOAuthDeepLink(url) {
+  if (!url || !url.startsWith('formatboy://')) return;
+  if (mainWindow && !mainWindow.isDestroyed()) {
+    mainWindow.webContents.send('oauth-callback', url);
+    if (mainWindow.isMinimized()) mainWindow.restore();
+    mainWindow.focus();
+  }
+}
+
+if (!gotTheLock) {
+  app.quit();
+} else {
+  // On Windows, deep link comes in as a second-instance commandLine arg
+  app.on('second-instance', (_event, commandLine) => {
+    const deepLink = commandLine.find(arg => arg.startsWith('formatboy://'));
+    if (deepLink) handleOAuthDeepLink(deepLink);
+    if (mainWindow) {
+      if (mainWindow.isMinimized()) mainWindow.restore();
+      mainWindow.focus();
+    }
+  });
+}
+
 // Explicitly load the .env file as requested
 const envPath = app.isPackaged 
     ? path.join(process.resourcesPath, '.env') 
@@ -18,13 +47,37 @@ if (fs.existsSync(envPath)) {
     dotenv.config({ path: envPath });
 }
 
+// Resolve the app icon path — prefer .ico for Windows, fall back to .png
+function resolveIconPath() {
+  const icoPath = path.join(__dirname, '../public/icon.ico');
+  const pngPath = path.join(__dirname, '../public/logo.png');
+
+  // In packaged mode, the paths are relative to the asar
+  const packedIco = path.join(__dirname, '../dist/icon.ico');
+  const packedPng = path.join(__dirname, '../dist/logo.png');
+
+  if (app.isPackaged) {
+    if (fs.existsSync(packedIco)) return packedIco;
+    if (fs.existsSync(packedPng)) return packedPng;
+  }
+
+  if (fs.existsSync(icoPath)) return icoPath;
+  if (fs.existsSync(pngPath)) return pngPath;
+
+  return undefined;
+}
+
 function createWindow() {
+  const iconPath = resolveIconPath();
+
   mainWindow = new BrowserWindow({
     width: 1280,
     height: 720,
     frame: false,
     autoHideMenuBar: true,
     backgroundColor: '#111111',
+    icon: iconPath,
+    show: false, // Prevent white flash — show after ready-to-show
     webPreferences: {
       nodeIntegration: true,
       contextIsolation: false,
@@ -33,6 +86,22 @@ function createWindow() {
   });
 
   mainWindow.removeMenu();
+
+  // Show window when content is ready — fixes "first click blank" issue
+  mainWindow.once('ready-to-show', () => {
+    mainWindow.show();
+    mainWindow.focus();
+  });
+
+  // Fallback: if ready-to-show never fires, force show after 3 seconds
+  const showTimeout = setTimeout(() => {
+    if (mainWindow && !mainWindow.isDestroyed() && !mainWindow.isVisible()) {
+      mainWindow.show();
+      mainWindow.focus();
+    }
+  }, 3000);
+
+  mainWindow.once('show', () => clearTimeout(showTimeout));
 
   mainWindow.webContents.setWindowOpenHandler(({ url }) => {
     if (url.includes('#/preview')) {
@@ -44,6 +113,7 @@ function createWindow() {
           title: 'Format-Boy preview',
           autoHideMenuBar: true,
           backgroundColor: '#000000',
+          icon: iconPath,
           webPreferences: {
             nodeIntegration: true,
             contextIsolation: false,
@@ -90,6 +160,17 @@ ipcMain.on('window-close', () => {
   if (mainWindow && !mainWindow.isDestroyed()) {
     mainWindow.close();
   }
+});
+
+// Open a URL in the system default browser (used for Google OAuth)
+ipcMain.on('open-external', (_event, url) => {
+  shell.openExternal(url);
+});
+
+// macOS: deep link comes via open-url event
+app.on('open-url', (event, url) => {
+  event.preventDefault();
+  handleOAuthDeepLink(url);
 });
 
 registerUpdaterIpc();

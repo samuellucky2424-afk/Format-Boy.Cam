@@ -1,7 +1,7 @@
 {
     "name":  "my-app",
     "private":  true,
-    "version":  "1.0.1",
+    "version":  "1.0.2",
     "type":  "module",
     "main":  "electron/main.js",
     "build":  {
@@ -26,7 +26,7 @@
                                              "portable"
                                          ],
                               "executableName":  "Format-Boy-Desktop",
-                              "icon":  "public/logo.png"
+                              "icon":  "public/icon.ico"
                           }
               },
     "scripts":  {

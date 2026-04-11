@@ -1,7 +1,7 @@
 import React, { createContext, useContext, useState, useEffect, useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { ROUTES } from '@/lib/routes';
-import { buildGoogleCallbackPath, buildHashRouteUrl } from '@/lib/auth';
+import { buildGoogleCallbackPath, buildHashRouteUrl, GOOGLE_AUTH_MESSAGE_TYPE, normalizeRedirectPath } from '@/lib/auth';
 import { supabase } from '@/lib/supabase';
 import type { User as SupabaseUser } from '@supabase/supabase-js';
 
@@ -30,6 +30,11 @@ const AuthContext = createContext<AuthContextType | undefined>(undefined);
 const GOOGLE_AUTH_POPUP_NAME = 'format-boy-google-auth';
 const GOOGLE_AUTH_POPUP_WIDTH = 520;
 const GOOGLE_AUTH_POPUP_HEIGHT = 720;
+
+/** Detect if running inside Electron */
+function isElectron(): boolean {
+  return typeof (window as any).require !== 'undefined';
+}
 
 function openCenteredPopup(): Window | null {
   if (typeof window === 'undefined') {
@@ -111,6 +116,45 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       subscription.unsubscribe();
     };
   }, []);
+
+  // Electron deep-link OAuth callback handler
+  useEffect(() => {
+    if (!isElectron()) return;
+
+    try {
+      const { ipcRenderer } = (window as any).require('electron');
+      const handler = (_event: any, url: string) => {
+        if (!url || !url.startsWith('formatboy://')) return;
+
+        // Parse the deep link: formatboy://auth/callback?code=XXX&next=/dashboard
+        try {
+          // Replace protocol to make it parseable
+          const parsed = new URL(url.replace('formatboy://', 'https://localhost/'));
+          const code = parsed.searchParams.get('code');
+          const nextPath = normalizeRedirectPath(parsed.searchParams.get('next'));
+
+          if (code) {
+            supabase.auth.exchangeCodeForSession(code).then(({ error: exchangeError }) => {
+              if (exchangeError) {
+                setError(exchangeError.message || 'Google sign-in failed');
+              } else {
+                navigate(nextPath, { replace: true });
+              }
+            });
+          }
+        } catch (parseErr) {
+          console.error('Failed to parse OAuth deep link:', parseErr);
+        }
+      };
+
+      ipcRenderer.on('oauth-callback', handler);
+      return () => {
+        ipcRenderer.removeListener('oauth-callback', handler);
+      };
+    } catch {
+      // Not in Electron or ipcRenderer not available
+    }
+  }, [navigate]);
 
   const clearError = useCallback(() => {
     setError(null);
@@ -196,6 +240,48 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const signInWithGoogle = async (redirectPath: string = ROUTES.DEFAULT) => {
     setLoading(true);
     setError(null);
+
+    // In Electron, use the system browser + deep link instead of popup
+    if (isElectron()) {
+      try {
+        const { ipcRenderer } = (window as any).require('electron');
+
+        // Build the redirect URL to use the Vercel-hosted callback page,
+        // which will then redirect to the formatboy:// deep link
+        const webCallbackUrl = (import.meta.env.VITE_API_BASE_URL || '')
+          .replace(/\/api\/?$/i, '') + '/#/auth/callback?next=' + encodeURIComponent(redirectPath) + '&auth=deeplink';
+
+        const { data, error: authError } = await supabase.auth.signInWithOAuth({
+          provider: 'google',
+          options: {
+            redirectTo: webCallbackUrl,
+            queryParams: {
+              access_type: 'offline',
+              prompt: 'consent',
+            },
+            skipBrowserRedirect: true,
+          },
+        });
+
+        if (authError) throw authError;
+
+        if (!data?.url) {
+          throw new Error('Google OAuth did not return a redirect URL.');
+        }
+
+        // Open Google OAuth in the system default browser
+        ipcRenderer.send('open-external', data.url);
+      } catch (err: any) {
+        const message = err.message || 'Google sign in failed';
+        setError(message);
+        throw err;
+      } finally {
+        setLoading(false);
+      }
+      return;
+    }
+
+    // Web: use popup flow
     const popup = openCenteredPopup();
     const callbackUrl = buildHashRouteUrl(buildGoogleCallbackPath(redirectPath, true));
 
