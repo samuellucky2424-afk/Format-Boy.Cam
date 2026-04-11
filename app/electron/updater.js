@@ -336,12 +336,6 @@ async function installDownloadedUpdate() {
   }
 
   activeInstallPromise = (async () => {
-    const updateDirectory = await ensureUpdateDirectory();
-    const scriptPath = path.join(updateDirectory, `apply-update-${Date.now()}.ps1`);
-    const currentExePath = process.execPath;
-    const workingDirectory = path.dirname(currentExePath);
-    const artifactType = updateState.artifactType || 'portable';
-
     setUpdateState({
       status: 'installing',
       progress: 100,
@@ -349,38 +343,8 @@ async function installDownloadedUpdate() {
       message: 'Installing update and restarting Format-Boy Cam...',
     });
 
-    const scriptBody = artifactType === 'installer'
-      ? buildInstallerScript()
-      : buildPortableReplacementScript();
-
-    await fs.promises.writeFile(scriptPath, scriptBody, 'utf8');
-
-    const powershellExecutable = path.join(process.env.SystemRoot || 'C:\\Windows', 'System32', 'WindowsPowerShell', 'v1.0', 'powershell.exe');
-    const spawnArguments = artifactType === 'installer'
-      ? [
-          '-NoProfile',
-          '-ExecutionPolicy',
-          'Bypass',
-          '-File',
-          scriptPath,
-          String(process.pid),
-          updateState.downloadedFilePath,
-          currentExePath,
-          workingDirectory,
-        ]
-      : [
-          '-NoProfile',
-          '-ExecutionPolicy',
-          'Bypass',
-          '-File',
-          scriptPath,
-          String(process.pid),
-          updateState.downloadedFilePath,
-          currentExePath,
-          workingDirectory,
-        ];
-
-    const updaterProcess = spawn(powershellExecutable, spawnArguments, {
+    const spawnArguments = ['/S', '--updated'];
+    const updaterProcess = spawn(updateState.downloadedFilePath, spawnArguments, {
       detached: true,
       stdio: 'ignore',
     });
@@ -409,81 +373,7 @@ async function installDownloadedUpdate() {
   return activeInstallPromise;
 }
 
-function buildPortableReplacementScript() {
-  return String.raw`param(
-  [int]$ParentPid,
-  [string]$SourceExe,
-  [string]$TargetExe,
-  [string]$WorkingDirectory
-)
 
-$ErrorActionPreference = 'Stop'
-$backupExe = "$TargetExe.bak"
-
-for ($index = 0; $index -lt 240; $index++) {
-  $parent = Get-Process -Id $ParentPid -ErrorAction SilentlyContinue
-  if (-not $parent) {
-    break
-  }
-
-  Start-Sleep -Milliseconds 500
-}
-
-if (Test-Path -LiteralPath $backupExe) {
-  Remove-Item -LiteralPath $backupExe -Force -ErrorAction SilentlyContinue
-}
-
-for ($attempt = 0; $attempt -lt 60; $attempt++) {
-  try {
-    if (Test-Path -LiteralPath $TargetExe) {
-      Move-Item -LiteralPath $TargetExe -Destination $backupExe -Force
-    }
-
-    Move-Item -LiteralPath $SourceExe -Destination $TargetExe -Force
-
-    if (Test-Path -LiteralPath $backupExe) {
-      Remove-Item -LiteralPath $backupExe -Force -ErrorAction SilentlyContinue
-    }
-
-    Start-Process -FilePath $TargetExe -WorkingDirectory $WorkingDirectory
-    exit 0
-  } catch {
-    if (Test-Path -LiteralPath $backupExe -and -not (Test-Path -LiteralPath $TargetExe)) {
-      Move-Item -LiteralPath $backupExe -Destination $TargetExe -Force -ErrorAction SilentlyContinue
-    }
-
-    Start-Sleep -Milliseconds 500
-  }
-}
-
-throw 'Failed to replace the Format-Boy Cam executable after shutdown.'
-`;
-}
-
-function buildInstallerScript() {
-  return String.raw`param(
-  [int]$ParentPid,
-  [string]$InstallerPath,
-  [string]$LaunchExe,
-  [string]$WorkingDirectory
-)
-
-$ErrorActionPreference = 'Stop'
-
-for ($index = 0; $index -lt 240; $index++) {
-  $parent = Get-Process -Id $ParentPid -ErrorAction SilentlyContinue
-  if (-not $parent) {
-    break
-  }
-
-  Start-Sleep -Milliseconds 500
-}
-
-# Running without /S so that SmartScreen/UAC prompts are visible
-Start-Process -FilePath $InstallerPath -Wait
-Start-Process -FilePath $LaunchExe -WorkingDirectory $WorkingDirectory
-`;
-}
 
 export async function checkForUpdates({ silent = false, autoDownload = true, autoInstall = false } = {}) {
   if (activeCheckPromise) {
