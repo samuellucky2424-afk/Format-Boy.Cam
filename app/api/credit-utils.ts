@@ -52,13 +52,21 @@ export async function getWalletByUserId(userId, options = {}) {
     return null;
   }
 
+  // Use upsert with ignoreDuplicates so concurrent calls (e.g. during
+  // identity linking) are idempotent and never throw a unique-constraint error.
+  const { error: upsertError } = await supabaseAdmin
+    .from('wallets')
+    .upsert({ user_id: userId, credits: 0 }, { onConflict: 'user_id', ignoreDuplicates: true });
+
+  if (upsertError) {
+    throw buildError(`Failed to create wallet: ${upsertError.message}`, upsertError);
+  }
+
+  // Re-fetch so we always return the actual (possibly pre-existing) wallet.
   const { data: createdWallet, error: createError } = await supabaseAdmin
     .from('wallets')
-    .insert({
-      user_id: userId,
-      credits: 0,
-    })
     .select('id, user_id, credits')
+    .eq('user_id', userId)
     .single();
 
   if (createError) {

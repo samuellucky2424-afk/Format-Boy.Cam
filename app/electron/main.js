@@ -47,37 +47,13 @@ if (fs.existsSync(envPath)) {
     dotenv.config({ path: envPath });
 }
 
-// Resolve the app icon path — prefer .ico for Windows, fall back to .png
-function resolveIconPath() {
-  const icoPath = path.join(__dirname, '../public/icon.ico');
-  const pngPath = path.join(__dirname, '../public/logo.png');
-
-  // In packaged mode, the paths are relative to the asar
-  const packedIco = path.join(__dirname, '../dist/icon.ico');
-  const packedPng = path.join(__dirname, '../dist/logo.png');
-
-  if (app.isPackaged) {
-    if (fs.existsSync(packedIco)) return packedIco;
-    if (fs.existsSync(packedPng)) return packedPng;
-  }
-
-  if (fs.existsSync(icoPath)) return icoPath;
-  if (fs.existsSync(pngPath)) return pngPath;
-
-  return undefined;
-}
-
 function createWindow() {
-  const iconPath = resolveIconPath();
-
   mainWindow = new BrowserWindow({
     width: 1280,
     height: 720,
     frame: false,
     autoHideMenuBar: true,
     backgroundColor: '#111111',
-    icon: iconPath,
-    show: false, // Prevent white flash — show after ready-to-show
     webPreferences: {
       nodeIntegration: true,
       contextIsolation: false,
@@ -86,22 +62,6 @@ function createWindow() {
   });
 
   mainWindow.removeMenu();
-
-  // Show window when content is ready — fixes "first click blank" issue
-  mainWindow.once('ready-to-show', () => {
-    mainWindow.show();
-    mainWindow.focus();
-  });
-
-  // Fallback: if ready-to-show never fires, force show after 3 seconds
-  const showTimeout = setTimeout(() => {
-    if (mainWindow && !mainWindow.isDestroyed() && !mainWindow.isVisible()) {
-      mainWindow.show();
-      mainWindow.focus();
-    }
-  }, 3000);
-
-  mainWindow.once('show', () => clearTimeout(showTimeout));
 
   mainWindow.webContents.setWindowOpenHandler(({ url }) => {
     if (url.includes('#/preview')) {
@@ -113,7 +73,6 @@ function createWindow() {
           title: 'Format-Boy preview',
           autoHideMenuBar: true,
           backgroundColor: '#000000',
-          icon: iconPath,
           webPreferences: {
             nodeIntegration: true,
             contextIsolation: false,
@@ -162,62 +121,9 @@ ipcMain.on('window-close', () => {
   }
 });
 
-// Open a URL in the system default browser (used for generic links)
+// Open a URL in the system default browser (used for Google OAuth)
 ipcMain.on('open-external', (_event, url) => {
   shell.openExternal(url);
-});
-
-// Open a custom popup for Google OAuth authentication
-ipcMain.on('open-auth-popup', (_event, authUrl) => {
-  const authWindow = new BrowserWindow({
-    width: 600,
-    height: 750,
-    parent: mainWindow,
-    modal: true,
-    show: false,
-    webPreferences: {
-      nodeIntegration: false,
-      contextIsolation: true
-    }
-  });
-
-  // Spoof the User-Agent to bypass Google's "disallowed_useragent" block for Electron
-  const userAgent = authWindow.webContents.userAgent.replace(/\sElectron\/.+?(\s|$)/, ' ');
-  authWindow.loadURL(authUrl, { userAgent });
-
-  authWindow.once('ready-to-show', () => {
-    authWindow.show();
-  });
-
-  // Intercept deep links or web callbacks eagerly to complete the sign-in process
-  const filterDeepLink = (event, url) => {
-    if (url.startsWith('formatboy://')) {
-      event.preventDefault();
-      handleOAuthDeepLink(url);
-      authWindow.close();
-      return;
-    }
-
-    // Fallback: Aggressively intercept the Vercal callback url to prevent blank screen hangs
-    if ((url.includes('format-boy-cam.vercel.app') || url.includes('localhost')) && (url.includes('code=') || url.includes('access_token='))) {
-      event.preventDefault();
-
-      let code = null;
-      const codeMatch = url.match(/[?&#]code=([^&#]+)/);
-      if (codeMatch) code = codeMatch[1];
-
-      if (code) {
-        const nextMatch = url.match(/[?&#]next=([^&#]+)/);
-        const next = nextMatch ? nextMatch[1] : '/dashboard';
-        const deepLink = `formatboy://auth/callback?code=${code}&next=${next}`;
-        handleOAuthDeepLink(deepLink);
-      }
-      authWindow.close();
-    }
-  };
-
-  authWindow.webContents.on('will-navigate', filterDeepLink);
-  authWindow.webContents.on('will-redirect', filterDeepLink);
 });
 
 // macOS: deep link comes via open-url event
