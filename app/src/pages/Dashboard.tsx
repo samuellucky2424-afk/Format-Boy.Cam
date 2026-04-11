@@ -589,7 +589,7 @@ function Dashboard() {
               className={`h-[34px] px-3.5 flex items-center gap-2 rounded-sm border transition-all ml-2 ${
                 isObsMode
                   ? 'bg-[#122A1F] border-[#133C29] text-[#22C55E]'
-                  : 'bg-[#122A1F] border-[#133C29] text-[#22C55E] hover:bg-[#153828]'
+                  : 'bg-[#1E1E1E] border-[#2A2A2A] text-[#737373] hover:text-[#A3A3A3]'
               }`}
             >
               <Monitor className="w-3.5 h-3.5 opacity-80" />
