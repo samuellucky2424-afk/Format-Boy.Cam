@@ -17,6 +17,33 @@ const CREDIT_PLANS = [
   { credits: 5000, priceNGN: 140000 },
 ];
 
+type PaystackCallbackResponse = {
+  reference?: string;
+  trxref?: string;
+};
+
+type PaystackSetupOptions = {
+  key: string;
+  email: string;
+  amount: number;
+  ref?: string;
+  access_code?: string;
+  callback: (data: PaystackCallbackResponse) => void;
+  onClose: () => void;
+};
+
+type PaystackHandler = {
+  openIframe: () => void;
+};
+
+declare global {
+  interface Window {
+    PaystackPop?: {
+      setup: (options: PaystackSetupOptions) => PaystackHandler;
+    };
+  }
+}
+
 function formatTime(credits: number): string {
   const seconds = credits / 2;
   const minutes = Math.floor(seconds / 60);
@@ -31,7 +58,7 @@ function formatTime(credits: number): string {
 
 function loadPaystackSDK(): Promise<void> {
   return new Promise((resolve, reject) => {
-    if (typeof (window as any).PaystackPop?.setup === 'function') {
+    if (typeof window.PaystackPop?.setup === 'function') {
       resolve();
       return;
     }
@@ -86,7 +113,7 @@ function Subscription() {
     try {
       await loadPaystackSDK();
 
-      if (typeof (window as any).PaystackPop?.setup !== 'function') {
+      if (typeof window.PaystackPop?.setup !== 'function') {
         toast.error('Paystack SDK not loaded. Please refresh the page.');
         setIsProcessing(false);
         return;
@@ -112,61 +139,65 @@ function Subscription() {
       const reference = initData.reference;
       const amountKobo = initData.amountKobo;
       const accessCode = initData.access_code;
+      const verifyPayment = async (paymentReference: string) => {
+        setIsProcessing(true);
+        try {
+          const res = await apiFetch('/payment/paystack-verify', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              reference: paymentReference,
+            }),
+            retries: 0,
+            timeoutMs: 45_000,
+          });
+          const verifyData = await res.json();
 
-      const handler = (window as any).PaystackPop.setup({
+          if (verifyData.status === 'success') {
+            if (!isFiniteNumber(verifyData.creditsAdded)) {
+              throw new Error('Invalid payment verification response');
+            }
+
+            try {
+              await refreshCredits();
+            } catch (syncError) {
+              console.warn('Failed to refresh credits after payment success:', syncError);
+            }
+
+            toast.success(`Payment verified! ${verifyData.creditsAdded.toLocaleString()} credits added.`);
+            setSelectedPlan(null);
+          } else if (verifyData.status === 'already_processed') {
+            try {
+              await refreshCredits();
+            } catch (syncError) {
+              console.warn('Failed to refresh credits after already-processed payment:', syncError);
+            }
+            toast.success('Payment already processed.');
+          } else {
+            toast.error(verifyData.message || 'Payment verification failed');
+          }
+        } catch (error) {
+          if (isTimeoutError(error)) {
+            toast.error('Payment verification is taking longer than expected. Your credits may still be applied shortly.');
+          } else if (isAbortError(error)) {
+            // The request was aborted; the UI will reset below.
+          } else {
+            console.error('Verification error payload:', error);
+            toast.error('Unable to verify payment automatically.');
+          }
+        } finally {
+          setIsProcessing(false);
+        }
+      };
+
+      const handler = window.PaystackPop.setup({
         key: import.meta.env.VITE_PAYSTACK_PUBLIC_KEY,
         email: user.email,
         amount: amountKobo,
         ref: reference,
         ...(accessCode ? { access_code: accessCode } : {}),
-        callback: async function (data: any) {
-          setIsProcessing(true);
-          try {
-            const res = await apiFetch('/payment/paystack-verify', {
-              method: 'POST',
-              headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({
-                reference: data?.reference || reference,
-              }),
-              retries: 0,
-              timeoutMs: 45_000,
-            });
-            const verifyData = await res.json();
-
-            if (verifyData.status === 'success') {
-              if (!isFiniteNumber(verifyData.creditsAdded)) {
-                throw new Error('Invalid payment verification response');
-              }
-
-              try {
-                await refreshCredits();
-              } catch (syncError) {
-                console.warn('Failed to refresh credits after payment success:', syncError);
-              }
-
-              toast.success(`Payment verified! ${verifyData.creditsAdded.toLocaleString()} credits added.`);
-              setSelectedPlan(null);
-            } else if (verifyData.status === 'already_processed') {
-              try {
-                await refreshCredits();
-              } catch (syncError) {
-                console.warn('Failed to refresh credits after already-processed payment:', syncError);
-              }
-              toast.success('Payment already processed.');
-            } else {
-              toast.error(verifyData.message || 'Payment verification failed');
-            }
-          } catch (error) {
-            if (isTimeoutError(error)) {
-              toast.error('Payment verification is taking longer than expected. Your credits may still be applied shortly.');
-            } else if (isAbortError(error)) {
-            } else {
-              console.error('Verification error payload:', error);
-              toast.error('Unable to verify payment automatically.');
-            }
-          } finally {
-            setIsProcessing(false);
-          }
+        callback: function (data: PaystackCallbackResponse) {
+          void verifyPayment(data.reference || data.trxref || reference);
         },
         onClose: function () {
           setIsProcessing(false);

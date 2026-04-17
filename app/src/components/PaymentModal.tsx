@@ -14,7 +14,8 @@ interface PaymentModalProps {
 }
 
 type PaystackCallbackResponse = {
-  reference: string;
+  reference?: string;
+  trxref?: string;
 };
 
 type PaystackSetupOptions = {
@@ -94,6 +95,61 @@ export function PaymentModal({ isOpen, onClose, plan }: PaymentModalProps) {
       const reference = initData.reference;
       const amountKobo = initData.amountKobo;
       const accessCode = initData.access_code;
+      const verifyPayment = async (paymentReference: string) => {
+        setStep('verifying');
+        try {
+          const verifyRes = await apiFetch('/payment/paystack-verify', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              reference: paymentReference,
+            }),
+            retries: 0,
+            timeoutMs: 45_000,
+          });
+          const verifyData = await verifyRes.json();
+
+          if (verifyData.status === 'success') {
+            if (!isFiniteNumber(verifyData.creditsAdded)) {
+              throw new Error('Invalid payment verification response');
+            }
+
+            try {
+              await refreshCredits();
+            } catch (syncError) {
+              console.warn('Failed to refresh credits after payment:', syncError);
+            }
+
+            setStep('success');
+            toast.success(`Payment verified! ${verifyData.creditsAdded.toLocaleString()} credits added.`);
+            setTimeout(() => {
+              onClose();
+              setStep('initial');
+              setIsProcessing(false);
+            }, 2000);
+          } else {
+            if (verifyData.status === 'already_processed') {
+              try {
+                await refreshCredits();
+              } catch (syncError) {
+                console.warn('Failed to refresh credits after already-processed payment:', syncError);
+              }
+            }
+            toast.error(verifyData.message || 'Payment verification failed');
+            setStep('initial');
+            setIsProcessing(false);
+          }
+        } catch (error) {
+          if (isTimeoutError(error)) {
+            toast.error('Payment verification is taking longer than expected. Your credits may still be applied shortly.');
+          } else {
+            console.error('Verification error:', error);
+            toast.error('Unable to verify payment automatically. Contact support.');
+          }
+          setStep('initial');
+          setIsProcessing(false);
+        }
+      };
 
       await loadPaystackSDK();
 
@@ -110,60 +166,8 @@ export function PaymentModal({ isOpen, onClose, plan }: PaymentModalProps) {
         amount: amountKobo,
         ref: reference,
         ...(accessCode ? { access_code: accessCode } : {}),
-        callback: async function (data: PaystackCallbackResponse) {
-          setStep('verifying');
-          try {
-            const verifyRes = await apiFetch('/payment/paystack-verify', {
-              method: 'POST',
-              headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({
-                reference: data.reference || reference,
-              }),
-              retries: 0,
-              timeoutMs: 45_000,
-            });
-            const verifyData = await verifyRes.json();
-
-            if (verifyData.status === 'success') {
-              if (!isFiniteNumber(verifyData.creditsAdded)) {
-                throw new Error('Invalid payment verification response');
-              }
-
-              try {
-                await refreshCredits();
-              } catch (syncError) {
-                console.warn('Failed to refresh credits after payment:', syncError);
-              }
-
-              setStep('success');
-              toast.success(`Payment verified! ${verifyData.creditsAdded.toLocaleString()} credits added.`);
-              setTimeout(() => {
-                onClose();
-                setStep('initial');
-                setIsProcessing(false);
-              }, 2000);
-            } else {
-              if (verifyData.status === 'already_processed') {
-                try {
-                  await refreshCredits();
-                } catch (syncError) {
-                  console.warn('Failed to refresh credits after already-processed payment:', syncError);
-                }
-              }
-              toast.error(verifyData.message || 'Payment verification failed');
-              setStep('initial');
-              setIsProcessing(false);
-            }
-          } catch (error) {
-            if (isTimeoutError(error)) {
-              toast.error('Payment verification is taking longer than expected. Your credits may still be applied shortly.');
-            } else {
-              console.error('Verification error:', error);
-              toast.error('Unable to verify payment automatically. Contact support.');
-            }
-            setStep('initial');
-            setIsProcessing(false);
-          }
+        callback: function (data: PaystackCallbackResponse) {
+          void verifyPayment(data.reference || data.trxref || reference);
         },
         onClose: function () {
           if (step !== 'verifying' && step !== 'success') {
