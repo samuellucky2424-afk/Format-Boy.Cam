@@ -126,6 +126,11 @@ ipcMain.on('open-external', (_event, url) => {
   shell.openExternal(url);
 });
 
+// Backward-compatible channel for the Google auth launch path.
+ipcMain.on('open-auth-popup', (_event, url) => {
+  shell.openExternal(url);
+});
+
 // Toggle window ghost mode (exclude from screen capture)
 ipcMain.on('toggle-capture-protection', (_event, { isProtected }) => {
   if (mainWindow && !mainWindow.isDestroyed()) {

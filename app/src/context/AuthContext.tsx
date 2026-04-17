@@ -1,7 +1,7 @@
 import React, { createContext, useContext, useState, useEffect, useCallback, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { ROUTES } from '@/lib/routes';
-import { buildGoogleCallbackPath, buildHashRouteUrl, GOOGLE_AUTH_MESSAGE_TYPE, normalizeRedirectPath } from '@/lib/auth';
+import { buildElectronCallbackUrl, buildGoogleCallbackPath, buildHashRouteUrl, normalizeRedirectPath } from '@/lib/auth';
 import { supabase } from '@/lib/supabase';
 import type { Session, User as SupabaseUser } from '@supabase/supabase-js';
 
@@ -316,18 +316,17 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     setLoading(true);
     setError(null);
 
-    // In Electron, use the system browser + deep link instead of popup
+    // In Electron, use the system browser + deep link back into the app.
     if (isElectron()) {
       try {
         const { ipcRenderer } = (window as any).require('electron');
 
-        const webCallbackUrl = (import.meta.env.VITE_API_BASE_URL || '')
-          .replace(/\/api\/?$/i, '') + '/#/auth/callback?next=' + encodeURIComponent(redirectPath) + '&auth=deeplink';
+        const callbackUrl = buildElectronCallbackUrl(redirectPath);
 
         const { data, error: authError } = await supabase.auth.signInWithOAuth({
           provider: 'google',
           options: {
-            redirectTo: webCallbackUrl,
+            redirectTo: callbackUrl,
             queryParams: {
               access_type: 'offline',
               prompt: 'consent',

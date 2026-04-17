@@ -29,3 +29,11 @@ export function buildGoogleCallbackPath(nextPath: string = ROUTES.DEFAULT, popup
 
   return `${ROUTES.PUBLIC.AUTH_CALLBACK}?${params.toString()}`;
 }
+
+export function buildElectronCallbackUrl(nextPath: string = ROUTES.DEFAULT): string {
+  const params = new URLSearchParams({
+    next: normalizeRedirectPath(nextPath),
+  });
+
+  return `formatboy://auth/callback?${params.toString()}`;
+}
