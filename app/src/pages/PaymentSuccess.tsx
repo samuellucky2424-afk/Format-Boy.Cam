@@ -21,18 +21,9 @@ function PaymentSuccess() {
   const [creditedCredits, setCreditedCredits] = useState<number | null>(null);
 
   useEffect(() => {
-    const transactionId = searchParams.get('transaction_id');
-    const txRef = searchParams.get('tx_ref');
-    const status = searchParams.get('status');
+    const reference = searchParams.get('reference');
 
-    // If Flutterwave returned a non-successful status
-    if (status && status !== 'successful' && status !== 'completed') {
-      setState('failed');
-      setMessage('Payment was not completed. Please try again.');
-      return;
-    }
-
-    if (!transactionId) {
+    if (!reference) {
       setState('failed');
       setMessage('Missing transaction information. Please contact support.');
       return;
@@ -42,12 +33,11 @@ function PaymentSuccess() {
 
     const verifyPayment = async () => {
       try {
-        const res = await apiFetch('/payment/flutterwave-verify', {
+        const res = await apiFetch('/payment/paystack-verify', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
-            transaction_id: transactionId,
-            tx_ref: txRef,
+            reference,
           }),
           signal: controller.signal,
           retries: 0,

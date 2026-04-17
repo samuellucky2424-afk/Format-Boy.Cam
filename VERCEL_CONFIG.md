@@ -27,7 +27,7 @@ Name: VITE_API_BASE_URL
 Value: https://format-boy-cam.vercel.app/api
 Environment: Production
 
-Name: VITE_FLUTTERWAVE_PUBLIC_KEY
+Name: VITE_PAYSTACK_PUBLIC_KEY
 Value: [from your .env]
 Environment: Production
 

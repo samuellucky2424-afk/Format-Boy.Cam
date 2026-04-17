@@ -29,23 +29,25 @@ function formatTime(credits: number): string {
   return `~${remainingSeconds}s`;
 }
 
-/** Lazy-load the Flutterwave SDK only when needed to avoid analytics 400 errors on page load */
-function loadFlutterwaveSDK(): Promise<void> {
+function loadPaystackSDK(): Promise<void> {
   return new Promise((resolve, reject) => {
-    if (typeof (window as any).FlutterwaveCheckout === 'function') {
+    if (typeof (window as any).PaystackPop?.setup === 'function') {
       resolve();
       return;
     }
-    const existing = document.querySelector('script[src*="checkout.flutterwave.com"]');
+
+    const existing = document.querySelector('script[src*="js.paystack.co"]');
     if (existing) {
       existing.addEventListener('load', () => resolve());
+      existing.addEventListener('error', () => reject(new Error('Failed to load Paystack SDK')));
       return;
     }
+
     const script = document.createElement('script');
-    script.src = 'https://checkout.flutterwave.com/v3.js';
+    script.src = 'https://js.paystack.co/v1/inline.js';
     script.async = true;
     script.onload = () => resolve();
-    script.onerror = () => reject(new Error('Failed to load Flutterwave SDK'));
+    script.onerror = () => reject(new Error('Failed to load Paystack SDK'));
     document.head.appendChild(script);
   });
 }
@@ -79,42 +81,58 @@ function Subscription() {
       return;
     }
 
-    const amountNGN = selectedPlan.priceNGN;
-
     setIsProcessing(true);
 
     try {
-      // Lazy-load Flutterwave SDK on first payment attempt
-      await loadFlutterwaveSDK();
+      await loadPaystackSDK();
 
-      const tx_ref = `FMT-${Date.now()}-${user.id}`;
-      (window as any).FlutterwaveCheckout({
-        public_key: import.meta.env.VITE_FLUTTERWAVE_PUBLIC_KEY,
-        tx_ref: tx_ref,
-        amount: amountNGN,
-        currency: "NGN",
-        payment_options: "card, mobilemoneyghana, ussd",
-        customer: { email: user.email },
-        customizations: {
-          title: "Format-Boy Cam - Credits",
-          description: `Buy ${selectedPlan.credits.toLocaleString()} credits for ₦${amountNGN.toLocaleString()}`,
-          logo: "/favicon.png",
-        },
+      if (typeof (window as any).PaystackPop?.setup !== 'function') {
+        toast.error('Paystack SDK not loaded. Please refresh the page.');
+        setIsProcessing(false);
+        return;
+      }
+
+      const initRes = await apiFetch('/payment/paystack-init', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          userId: user.id,
+          credits: selectedPlan.credits,
+          email: user.email,
+        }),
+        retries: 0,
+        timeoutMs: 45_000,
+      });
+
+      const initData = await initRes.json();
+      if (!initRes.ok || initData.status !== 'success') {
+        throw new Error(initData.message || 'Failed to initialize payment');
+      }
+
+      const reference = initData.reference;
+      const amountKobo = initData.amountKobo;
+      const accessCode = initData.access_code;
+
+      const handler = (window as any).PaystackPop.setup({
+        key: import.meta.env.VITE_PAYSTACK_PUBLIC_KEY,
+        email: user.email,
+        amount: amountKobo,
+        ref: reference,
+        ...(accessCode ? { access_code: accessCode } : {}),
         callback: async function (data: any) {
           setIsProcessing(true);
           try {
-            const res = await apiFetch('/payment/flutterwave-verify', {
+            const res = await apiFetch('/payment/paystack-verify', {
               method: 'POST',
               headers: { 'Content-Type': 'application/json' },
               body: JSON.stringify({
-                transaction_id: data.transaction_id,
-                tx_ref: tx_ref,
+                reference: data?.reference || reference,
               }),
               retries: 0,
               timeoutMs: 45_000,
             });
             const verifyData = await res.json();
-            
+
             if (verifyData.status === 'success') {
               if (!isFiniteNumber(verifyData.creditsAdded)) {
                 throw new Error('Invalid payment verification response');
@@ -142,7 +160,6 @@ function Subscription() {
             if (isTimeoutError(error)) {
               toast.error('Payment verification is taking longer than expected. Your credits may still be applied shortly.');
             } else if (isAbortError(error)) {
-              // Silently ignore abort errors (e.g. component unmount, navigation)
             } else {
               console.error('Verification error payload:', error);
               toast.error('Unable to verify payment automatically.');
@@ -151,10 +168,12 @@ function Subscription() {
             setIsProcessing(false);
           }
         },
-        onclose: function () {
+        onClose: function () {
           setIsProcessing(false);
-        }
+        },
       });
+
+      handler.openIframe();
     } catch (error) {
       console.error('Payment init error:', error);
       toast.error('Unable to start payment. Please try again.');

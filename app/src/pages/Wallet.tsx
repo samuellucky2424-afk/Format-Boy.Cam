@@ -114,11 +114,11 @@ function Wallet() {
               id="proceed-payment-btn"
             >
               <ExternalLink className="w-4 h-4 mr-2" />
-              Pay {selectedPlan ? `NGN ${selectedPlan.priceNGN.toLocaleString()}` : 'with Flutterwave'}
+              Pay {selectedPlan ? `NGN ${selectedPlan.priceNGN.toLocaleString()}` : 'with Paystack'}
             </Button>
 
             <p className="text-xs text-[#52525b] text-center mt-3">
-              You&apos;ll be redirected to Flutterwave&apos;s secure payment page
+              You&apos;ll be redirected to Paystack&apos;s secure payment page
             </p>
           </CardContent>
         </Card>

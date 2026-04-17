@@ -8,14 +8,13 @@ function normalizeApiBase(value?: string | null): string | null {
 }
 
 function getApiBase(): string {
-  // In development, use relative path so Vite's dev proxy handles it.
-  // In production (or Electron), use the full configured URL.
-  if (import.meta.env.DEV) {
-    return '/api';
+  const configuredBase = normalizeApiBase(import.meta.env.VITE_API_BASE_URL);
+  if (configuredBase) {
+    return `${configuredBase}/api`;
   }
 
-  const configuredBase = normalizeApiBase(import.meta.env.VITE_API_BASE_URL);
-  return configuredBase ? `${configuredBase}/api` : '/api';
+  // Fall back to a relative path only when no explicit API base is configured.
+  return '/api';
 }
 
 function withLeadingSlash(path: string): string {

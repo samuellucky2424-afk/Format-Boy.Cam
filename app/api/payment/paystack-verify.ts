@@ -2,16 +2,25 @@
 import { supabaseAdmin, supabaseAdminConfigError } from '../supabase.js';
 import { requireWalletByUserId, logCreditUpdate, updateWalletCredits } from '../credit-utils.js';
 
-const CREDIT_PRICING = {
+const CREDIT_PRICING_NGN = {
   500: 14000,
   1000: 28000,
   2000: 56000,
   5000: 140000
 };
+
 const CREDITS_PER_SECOND = 2;
 
+function toKobo(amountNGN) {
+  const amount = Number(amountNGN);
+  return Number.isFinite(amount) ? Math.round(amount * 100) : NaN;
+}
+
+const CREDIT_PRICING_KOBO = Object.fromEntries(
+  Object.entries(CREDIT_PRICING_NGN).map(([credits, ngn]) => [credits, toKobo(ngn)])
+);
+
 export default async function handler(req, res) {
-  // CORS
   res.setHeader("Access-Control-Allow-Origin", "*");
   res.setHeader("Access-Control-Allow-Methods", "POST, OPTIONS");
   res.setHeader("Access-Control-Allow-Headers", "Content-Type, Authorization");
@@ -19,12 +28,12 @@ export default async function handler(req, res) {
   if (req.method === 'OPTIONS') return res.status(200).end();
   if (req.method !== 'POST') return res.status(405).json({ error: 'Method not allowed' });
 
-  const { transaction_id, tx_ref } = req.body;
+  const { reference } = req.body;
 
-  if (!transaction_id) {
+  if (!reference) {
     return res.status(400).json({
       status: 'failed',
-      message: 'Missing required field: transaction_id',
+      message: 'Missing required field: reference',
     });
   }
 
@@ -35,22 +44,21 @@ export default async function handler(req, res) {
     });
   }
 
-  const flutterwaveSecretKey = process.env.FLUTTERWAVE_SECRET_KEY;
-  if (!flutterwaveSecretKey) {
+  const paystackSecretKey = process.env.PAYSTACK_SECRET_KEY;
+  if (!paystackSecretKey) {
     return res.status(500).json({
       status: 'failed',
-      message: 'Flutterwave secret key not configured',
+      message: 'Paystack secret key not configured',
     });
   }
 
   try {
-    // 1. Verify with Flutterwave
     const verifyResponse = await fetch(
-      `https://api.flutterwave.com/v3/transactions/${encodeURIComponent(transaction_id)}/verify`,
+      `https://api.paystack.co/transaction/verify/${encodeURIComponent(reference)}`,
       {
         method: 'GET',
         headers: {
-          Authorization: `Bearer ${flutterwaveSecretKey}`,
+          Authorization: `Bearer ${paystackSecretKey}`,
           'Content-Type': 'application/json',
         },
       }
@@ -58,51 +66,54 @@ export default async function handler(req, res) {
 
     const verifyData = await verifyResponse.json();
 
-    if (verifyData.status !== 'success' || verifyData.data?.status !== 'successful') {
+    if (!verifyResponse.ok || !verifyData?.status) {
+      return res.status(400).json({
+        status: 'failed',
+        message: verifyData?.message || 'Payment verification failed',
+      });
+    }
+
+    if (verifyData.data?.status !== 'success') {
       return res.status(400).json({
         status: 'failed',
         message: 'Payment was not successful',
-        flutterwave_status: verifyData.data?.status || 'unknown',
+        paystack_status: verifyData.data?.status || 'unknown',
       });
     }
 
-    // 2. Validate currency
-    if (verifyData.data.currency !== 'NGN') {
+    if (verifyData.data?.currency !== 'NGN') {
       return res.status(400).json({
         status: 'failed',
-        message: `Invalid currency: expected NGN, got ${verifyData.data.currency}`,
+        message: `Invalid currency: expected NGN, got ${verifyData.data?.currency}`,
       });
     }
 
-    const amount = Number(verifyData.data.amount);
-    if (!Number.isFinite(amount)) {
+    const amountKobo = Number(verifyData.data?.amount);
+    if (!Number.isFinite(amountKobo)) {
       return res.status(400).json({
         status: 'failed',
         message: 'Invalid payment amount from provider',
       });
     }
 
-    const reference = verifyData.data.tx_ref;
-
-    if (tx_ref && tx_ref !== reference) {
+    const referenceFromProvider = verifyData.data?.reference;
+    if (referenceFromProvider && referenceFromProvider !== reference) {
       return res.status(400).json({
         status: 'failed',
         message: 'Transaction reference mismatch',
       });
     }
 
-    // 3. Extract user_id from tx_ref (format: FMT-{timestamp}-{userId})
-    const txRefParts = reference?.split('-');
-    const userId = txRefParts?.length >= 3 ? txRefParts.slice(2).join('-') : null;
+    const refParts = String(reference).split('-');
+    const userId = refParts?.length >= 3 ? refParts.slice(2).join('-') : null;
 
     if (!userId) {
       return res.status(400).json({
         status: 'failed',
-        message: 'Could not extract user ID from transaction reference',
+        message: 'Could not extract user ID from reference',
       });
     }
 
-    // 4. Check for duplicate — prevent double-credit
     const { data: existingTx } = await supabaseAdmin
       .from('transactions')
       .select('id')
@@ -117,10 +128,9 @@ export default async function handler(req, res) {
       });
     }
 
-    // 5. Map amount strictly to credits without trusting frontend meta
     let creditsToAdd = 0;
-    for (const [credits, expectedPrice] of Object.entries(CREDIT_PRICING)) {
-      if (amount === expectedPrice) {
+    for (const [credits, expectedKobo] of Object.entries(CREDIT_PRICING_KOBO)) {
+      if (amountKobo === expectedKobo) {
         creditsToAdd = Number(credits);
         break;
       }
@@ -129,7 +139,7 @@ export default async function handler(req, res) {
     if (creditsToAdd === 0) {
       return res.status(400).json({
         status: 'failed',
-        message: `Amount NGN ${amount} does not match any valid credit tier.`,
+        message: `Amount ₦${(amountKobo / 100).toLocaleString()} does not match any valid credit tier.`,
       });
     }
 
@@ -144,24 +154,25 @@ export default async function handler(req, res) {
       source: 'payment-verify',
     });
 
-    // 6. Insert transaction record
     await supabaseAdmin
       .from('transactions')
       .insert({
         user_id: userId,
         wallet_id: creditAccount.id,
-        amount,
+        amount: amountKobo / 100,
         credits: creditsToAdd,
         type: 'credit',
         status: 'success',
-        tx_ref: reference,
         reference,
-        provider: 'flutterwave',
-        description: 'Credit purchase via Flutterwave',
+        provider: 'paystack',
+        description: 'Credit purchase via Paystack',
         metadata: {
-          provider: 'flutterwave',
-          transaction_id: String(transaction_id),
+          provider: 'paystack',
+          transaction_id: String(verifyData.data?.id ?? ''),
           currency: 'NGN',
+          gateway_response: verifyData.data?.gateway_response,
+          channel: verifyData.data?.channel,
+          paid_at: verifyData.data?.paid_at,
           credits_per_second: CREDITS_PER_SECOND,
         },
         created_at: new Date().toISOString(),
@@ -170,13 +181,13 @@ export default async function handler(req, res) {
     return res.status(200).json({
       status: 'success',
       message: 'Payment verified and credits added',
-      amountPaid: amount,
+      amountPaid: amountKobo / 100,
       newCredits: updatedWallet.credits,
       creditsAdded: creditsToAdd,
       remainingSeconds: Math.floor(updatedWallet.credits / CREDITS_PER_SECOND),
     });
   } catch (error) {
-    console.error('Flutterwave verify error:', error);
+    console.error('Paystack verify error:', error);
     return res.status(500).json({
       status: 'failed',
       message: 'Internal server error during payment verification',

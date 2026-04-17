@@ -20,7 +20,7 @@ On GitHub (Repository Settings > Secrets and variables > Actions):
 
 Add these secrets (so the Windows build can find your API keys):
 - `VITE_API_BASE_URL`
-- `VITE_FLUTTERWAVE_PUBLIC_KEY`
+- `VITE_PAYSTACK_PUBLIC_KEY`
 - `VITE_SUPABASE_URL`
 - `VITE_SUPABASE_ANON_KEY`
 

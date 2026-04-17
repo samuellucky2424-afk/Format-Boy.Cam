@@ -13,6 +13,55 @@ interface PaymentModalProps {
   plan: { credits: number; priceNGN: number } | null;
 }
 
+type PaystackCallbackResponse = {
+  reference: string;
+};
+
+type PaystackSetupOptions = {
+  key: string;
+  email: string;
+  amount: number;
+  ref?: string;
+  access_code?: string;
+  callback: (data: PaystackCallbackResponse) => void;
+  onClose: () => void;
+};
+
+type PaystackHandler = {
+  openIframe: () => void;
+};
+
+declare global {
+  interface Window {
+    PaystackPop?: {
+      setup: (options: PaystackSetupOptions) => PaystackHandler;
+    };
+  }
+}
+
+function loadPaystackSDK(): Promise<void> {
+  return new Promise((resolve, reject) => {
+    if (typeof window.PaystackPop?.setup === 'function') {
+      resolve();
+      return;
+    }
+
+    const existing = document.querySelector('script[src*="js.paystack.co"]');
+    if (existing) {
+      existing.addEventListener('load', () => resolve());
+      existing.addEventListener('error', () => reject(new Error('Failed to load Paystack SDK')));
+      return;
+    }
+
+    const script = document.createElement('script');
+    script.src = 'https://js.paystack.co/v1/inline.js';
+    script.async = true;
+    script.onload = () => resolve();
+    script.onerror = () => reject(new Error('Failed to load Paystack SDK'));
+    document.head.appendChild(script);
+  });
+}
+
 export function PaymentModal({ isOpen, onClose, plan }: PaymentModalProps) {
   const { user } = useAuth();
   const { refreshCredits } = useApp();
@@ -26,8 +75,7 @@ export function PaymentModal({ isOpen, onClose, plan }: PaymentModalProps) {
     setStep('initializing');
 
     try {
-      // 1. Initialize payment (Backend generates tx_ref, avoids trusting frontend)
-      const initRes = await apiFetch('/payment/flutterwave-init', {
+      const initRes = await apiFetch('/payment/paystack-init', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -43,42 +91,33 @@ export function PaymentModal({ isOpen, onClose, plan }: PaymentModalProps) {
         throw new Error(initData.message || 'Failed to initialize payment');
       }
 
-      // The backend returns the secure config
-      const tx_ref = initData.tx_ref;
-      const secureAmount = initData.amount;
+      const reference = initData.reference;
+      const amountKobo = initData.amountKobo;
+      const accessCode = initData.access_code;
 
-      if (typeof (window as any).FlutterwaveCheckout !== "function") {
-        toast.error('Flutterwave SDK not loaded. Please refresh the page.');
+      await loadPaystackSDK();
+
+      if (typeof window.PaystackPop?.setup !== 'function') {
+        toast.error('Paystack SDK not loaded. Please refresh the page.');
         setIsProcessing(false);
         setStep('initial');
         return;
       }
 
-      // 2. Open Inline Modal
-      (window as any).FlutterwaveCheckout({
-        public_key: import.meta.env.VITE_FLUTTERWAVE_PUBLIC_KEY,
-        tx_ref: tx_ref,
-        amount: secureAmount, // Backend-calculated amount
-        currency: "NGN",
-        payment_options: "card, mobilemoneyghana, ussd",
-        customer: {
-          email: user.email,
-        },
-        customizations: {
-          title: "Format-Boy Cam - Credits",
-          description: `Buy ${plan.credits.toLocaleString()} credits for ₦${secureAmount.toLocaleString()}`,
-          logo: "https://format-boy-cam.vercel.app/logo.png",
-        },
-        callback: async function (data: any) {
-          // 3. Verify Payment
+      const handler = window.PaystackPop.setup({
+        key: import.meta.env.VITE_PAYSTACK_PUBLIC_KEY,
+        email: user.email,
+        amount: amountKobo,
+        ref: reference,
+        ...(accessCode ? { access_code: accessCode } : {}),
+        callback: async function (data: PaystackCallbackResponse) {
           setStep('verifying');
           try {
-            const verifyRes = await apiFetch('/payment/flutterwave-verify', {
+            const verifyRes = await apiFetch('/payment/paystack-verify', {
               method: 'POST',
               headers: { 'Content-Type': 'application/json' },
               body: JSON.stringify({
-                transaction_id: data.transaction_id,
-                tx_ref: tx_ref,
+                reference: data.reference || reference,
               }),
               retries: 0,
               timeoutMs: 45_000,
@@ -126,16 +165,18 @@ export function PaymentModal({ isOpen, onClose, plan }: PaymentModalProps) {
             setIsProcessing(false);
           }
         },
-        onclose: function () {
+        onClose: function () {
           if (step !== 'verifying' && step !== 'success') {
             setIsProcessing(false);
             setStep('initial');
           }
-        }
+        },
       });
-    } catch (error: any) {
+
+      handler.openIframe();
+    } catch (error: unknown) {
       console.error('Payment flow error:', error);
-      toast.error(error.message || 'Unable to start payment. Please try again.');
+      toast.error(error instanceof Error ? error.message : 'Unable to start payment. Please try again.');
       setIsProcessing(false);
       setStep('initial');
     }
