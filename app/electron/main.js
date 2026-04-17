@@ -8,6 +8,8 @@ import { registerUpdaterIpc, scheduleBackgroundUpdateCheck } from './updater.js'
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 let mainWindow = null;
+let authWindow = null;
+let authCallbackHandled = false;
 
 // Register custom protocol for OAuth deep links (must be before app.ready)
 app.setAsDefaultProtocolClient('formatboy');
@@ -15,13 +17,97 @@ app.setAsDefaultProtocolClient('formatboy');
 // Enforce single instance so deep link callbacks work on Windows
 const gotTheLock = app.requestSingleInstanceLock();
 
-function handleOAuthDeepLink(url) {
-  if (!url || !url.startsWith('formatboy://')) return;
+function isOAuthCallbackUrl(url) {
+  if (!url) return false;
+
+  try {
+    const parsed = new URL(url);
+    if (parsed.protocol === 'formatboy:') {
+      return true;
+    }
+
+    if (parsed.protocol === 'http:' || parsed.protocol === 'https:') {
+      return ['localhost', '127.0.0.1', '::1'].includes(parsed.hostname);
+    }
+
+    return false;
+  } catch {
+    return url.startsWith('formatboy://');
+  }
+}
+
+function closeAuthWindow() {
+  if (authWindow && !authWindow.isDestroyed()) {
+    authWindow.destroy();
+  }
+  authWindow = null;
+}
+
+function handleOAuthCallback(url) {
+  if (!isOAuthCallbackUrl(url)) return;
+  if (authCallbackHandled) return;
+
+  authCallbackHandled = true;
+
+  closeAuthWindow();
+
   if (mainWindow && !mainWindow.isDestroyed()) {
     mainWindow.webContents.send('oauth-callback', url);
     if (mainWindow.isMinimized()) mainWindow.restore();
     mainWindow.focus();
   }
+}
+
+function createAuthWindow(url) {
+  if (!url) return;
+
+  authCallbackHandled = false;
+  closeAuthWindow();
+
+  authWindow = new BrowserWindow({
+    parent: mainWindow || undefined,
+    modal: Boolean(mainWindow),
+    width: 520,
+    height: 720,
+    autoHideMenuBar: true,
+    backgroundColor: '#111111',
+    title: 'Continue with Google',
+    webPreferences: {
+      nodeIntegration: false,
+      contextIsolation: true,
+      sandbox: true,
+      nativeWindowOpen: false,
+    },
+  });
+
+  authWindow.removeMenu();
+
+  const handleNavigation = (event, nextUrl) => {
+    if (!isOAuthCallbackUrl(nextUrl)) {
+      return;
+    }
+
+    event.preventDefault();
+    handleOAuthCallback(nextUrl);
+  };
+
+  authWindow.webContents.on('will-navigate', handleNavigation);
+  authWindow.webContents.on('will-redirect', handleNavigation);
+  authWindow.webContents.setWindowOpenHandler(({ url: nextUrl }) => {
+    if (isOAuthCallbackUrl(nextUrl)) {
+      handleOAuthCallback(nextUrl);
+      return { action: 'deny' };
+    }
+
+    shell.openExternal(nextUrl);
+    return { action: 'deny' };
+  });
+
+  authWindow.on('closed', () => {
+    authWindow = null;
+  });
+
+  authWindow.loadURL(url);
 }
 
 if (!gotTheLock) {
@@ -30,7 +116,7 @@ if (!gotTheLock) {
   // On Windows, deep link comes in as a second-instance commandLine arg
   app.on('second-instance', (_event, commandLine) => {
     const deepLink = commandLine.find(arg => arg.startsWith('formatboy://'));
-    if (deepLink) handleOAuthDeepLink(deepLink);
+    if (deepLink) handleOAuthCallback(deepLink);
     if (mainWindow) {
       if (mainWindow.isMinimized()) mainWindow.restore();
       mainWindow.focus();
@@ -126,9 +212,9 @@ ipcMain.on('open-external', (_event, url) => {
   shell.openExternal(url);
 });
 
-// Backward-compatible channel for the Google auth launch path.
+// Open the native Google auth popup inside the app.
 ipcMain.on('open-auth-popup', (_event, url) => {
-  shell.openExternal(url);
+  createAuthWindow(url);
 });
 
 // Toggle window ghost mode (exclude from screen capture)
@@ -141,7 +227,7 @@ ipcMain.on('toggle-capture-protection', (_event, { isProtected }) => {
 // macOS: deep link comes via open-url event
 app.on('open-url', (event, url) => {
   event.preventDefault();
-  handleOAuthDeepLink(url);
+  handleOAuthCallback(url);
 });
 
 registerUpdaterIpc();

@@ -44,7 +44,24 @@ const GOOGLE_AUTH_POPUP_HEIGHT = 720;
 
 /** Detect if running inside Electron */
 function isElectron(): boolean {
-  return typeof (window as any).require !== 'undefined';
+  if (typeof window === 'undefined') return false;
+
+  return Boolean(
+    (window as any).process?.versions?.electron ||
+    navigator.userAgent.includes('Electron')
+  );
+}
+
+function parseOAuthCallbackUrl(url: string): URL | null {
+  try {
+    return new URL(url);
+  } catch {
+    try {
+      return new URL(url.replace('formatboy://', 'https://localhost/'));
+    } catch {
+      return null;
+    }
+  }
 }
 
 function openCenteredPopup(): Window | null {
@@ -203,26 +220,29 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     try {
       const { ipcRenderer } = (window as any).require('electron');
       const handler = (_event: any, url: string) => {
-        if (!url || !url.startsWith('formatboy://')) return;
+        if (!url) return;
 
-        // Parse the deep link: formatboy://auth/callback?code=XXX&next=/dashboard
-        try {
-          const parsed = new URL(url.replace('formatboy://', 'https://localhost/'));
-          const code = parsed.searchParams.get('code');
-          const nextPath = normalizeRedirectPath(parsed.searchParams.get('next'));
+        const parsed = parseOAuthCallbackUrl(url);
+        if (!parsed) return;
 
-          if (code) {
-            supabase.auth.exchangeCodeForSession(code).then(({ error: exchangeError }) => {
-              if (exchangeError) {
-                setError(exchangeError.message || 'Google sign-in failed');
-              } else {
-                navigate(nextPath, { replace: true });
-              }
-            });
-          }
-        } catch (parseErr) {
-          console.error('Failed to parse OAuth deep link:', parseErr);
+        const code = parsed.searchParams.get('code');
+        const nextPath = normalizeRedirectPath(parsed.searchParams.get('next'));
+        const oauthError = parsed.searchParams.get('error_description') || parsed.searchParams.get('error');
+
+        if (oauthError) {
+          setError(oauthError);
+          return;
         }
+
+        if (!code) return;
+
+        supabase.auth.exchangeCodeForSession(code).then(({ error: exchangeError }) => {
+          if (exchangeError) {
+            setError(exchangeError.message || 'Google sign-in failed');
+          } else {
+            navigate(nextPath, { replace: true });
+          }
+        });
       };
 
       ipcRenderer.on('oauth-callback', handler);
@@ -316,7 +336,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     setLoading(true);
     setError(null);
 
-    // In Electron, use the system browser + deep link back into the app.
+    // In Electron, use the native auth popup and hand the callback back into the app.
     if (isElectron()) {
       try {
         const { ipcRenderer } = (window as any).require('electron');

@@ -1,7 +1,7 @@
 {
     "name":  "my-app",
     "private":  true,
-    "version":  "1.11.8",
+    "version":  "1.11.9",
     "type":  "module",
     "main":  "electron/main.js",
     "build":  {
