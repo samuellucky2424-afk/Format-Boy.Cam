@@ -248,7 +248,7 @@ function Dashboard() {
         apiKey: apiToken
       });
       
-      const model = models.realtime('lucy_2_rt');
+      const model = models.realtime('lucy-2.1');
 
       const realtimeClient = await client.realtime.connect(stream, {
         model,
