@@ -11,3 +11,4 @@ release/
 build_output.txt
 app/release/
 app/dist/
+native-camera/build/

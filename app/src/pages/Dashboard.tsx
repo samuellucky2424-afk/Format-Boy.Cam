@@ -6,16 +6,25 @@ import { useAuth } from '@/context/AuthContext';
 import { useApp } from '@/context/AppContext';
 import { apiFetch } from '@/lib/api-client';
 import { ROUTES } from '@/lib/routes';
+import { VirtualCameraService } from '@/services/VirtualCameraService';
 import { isFiniteNumber } from '@/lib/utils';
 
 interface RealtimeClient {
   disconnect: () => void;
   set: (config: { prompt?: string; enhance?: boolean; image?: string | Blob | File }) => Promise<void>;
   setPrompt: (text: string, options?: { enhance?: boolean }) => Promise<void>;
+  on?: (event: string, listener: (data: any) => void) => void;
+  off?: (event: string, listener: (data: any) => void) => void;
 }
 
 const PREVIEW_WINDOW_NAME = 'format-boy-preview';
 const PREVIEW_WINDOW_FEATURES = 'popup=yes,width=1280,height=720,minWidth=640,minHeight=360,resizable=yes,scrollbars=no';
+const DECART_REALTIME_MODEL = 'lucy_2_rt';
+const DECART_REALTIME_WIDTH = 1280;
+const DECART_REALTIME_HEIGHT = 720;
+const DECART_REALTIME_FPS = 20;
+const REMOTE_VIDEO_READY_TIMEOUT_MS = 3000;
+const REMOTE_VIDEO_VISIBLE_TIMEOUT_MS = 15000;
 
 async function apiRequest<T>(endpoint: string, options?: RequestInit): Promise<T> {
   const response = await apiFetch(endpoint, {
@@ -30,6 +39,42 @@ async function apiRequest<T>(endpoint: string, options?: RequestInit): Promise<T
     throw new Error(errorData.error || errorData.message || `API Error: ${response.statusText}`);
   }
   return response.json();
+}
+
+function emitElectronLog(level: 'log' | 'info' | 'warn' | 'error', message: string, data?: unknown) {
+  try {
+    if (typeof window !== 'undefined' && typeof window.require !== 'undefined') {
+      const { ipcRenderer } = window.require('electron');
+      ipcRenderer.send('renderer-log', { level, message, data });
+    }
+  } catch {
+    // Ignore logging bridge failures.
+  }
+}
+
+function stripSimulcastFromOffer(offer: RTCSessionDescriptionInit) {
+  if (!offer.sdp) return { offer, removedLines: [] as string[] };
+
+  const lines = offer.sdp.split('\r\n');
+  const removedLines = lines.filter((line) =>
+    /^a=(rid|simulcast):/i.test(line) || /^a=ssrc-group:SIM /i.test(line)
+  );
+
+  if (removedLines.length === 0) {
+    return { offer, removedLines };
+  }
+
+  const filteredLines = lines.filter((line) =>
+    !/^a=(rid|simulcast):/i.test(line) && !/^a=ssrc-group:SIM /i.test(line)
+  );
+
+  return {
+    offer: {
+      ...offer,
+      sdp: filteredLines.join('\r\n')
+    },
+    removedLines
+  };
 }
 
 function Dashboard() {
@@ -49,6 +94,7 @@ function Dashboard() {
   const webcamVideoRef = useRef<HTMLVideoElement>(null);
   const outputVideoRef = useRef<HTMLVideoElement>(null);
   const webcamStreamRef = useRef<MediaStream | null>(null);
+  const virtualCameraRef = useRef<VirtualCameraService | null>(null);
   const realtimeClientRef = useRef<RealtimeClient | null>(null);
   const pollIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const previewWindowRef = useRef<Window | null>(null);
@@ -134,6 +180,25 @@ function Dashboard() {
     }
   };
 
+  const startVirtualCamera = useCallback((video: HTMLVideoElement | null) => {
+    if (!video) {
+      return;
+    }
+
+    if (!virtualCameraRef.current) {
+      virtualCameraRef.current = new VirtualCameraService();
+    }
+
+    void virtualCameraRef.current.start(video).catch((error) => {
+      console.error('Virtual camera start error:', error);
+    });
+  }, []);
+
+  const stopVirtualCamera = useCallback(() => {
+    virtualCameraRef.current?.stop();
+    virtualCameraRef.current = null;
+  }, []);
+
   useEffect(() => {
         return () => {
       if (pollIntervalRef.current) {
@@ -145,9 +210,10 @@ function Dashboard() {
       if (realtimeClientRef.current) {
         realtimeClientRef.current.disconnect();
       }
+      stopVirtualCamera();
       closeObsPreviewWindow(false);
     };
-  }, [closeObsPreviewWindow]);
+  }, [closeObsPreviewWindow, stopVirtualCamera]);
 
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
@@ -170,24 +236,39 @@ function Dashboard() {
     return () => window.clearInterval(intervalId);
   }, []);
 
+  const isVirtualCameraSource = useCallback((device: MediaDeviceInfo) => {
+    const label = device.label.toLowerCase();
+    return label.includes('format-boy cam') || label.includes('windows virtual camera');
+  }, []);
+
   const enumerateCameras = useCallback(async () => {
     try {
       const devices = await navigator.mediaDevices.enumerateDevices();
-      const videoDevices = devices.filter(d => d.kind === 'videoinput');
+      const videoDevices = devices
+        .filter(d => d.kind === 'videoinput')
+        .filter(d => !isVirtualCameraSource(d));
+
       setCameraDevices(videoDevices);
-      if (videoDevices.length > 0 && !selectedCameraId) {
+
+      const selectedStillAvailable = videoDevices.some((device) => device.deviceId === selectedCameraId);
+      if (selectedCameraId && !selectedStillAvailable) {
+        setSelectedCameraId('');
+      }
+
+      if (videoDevices.length > 0 && (!selectedCameraId || !selectedStillAvailable)) {
         const builtin = videoDevices.find(d =>
           d.label.toLowerCase().includes('integrated') ||
           d.label.toLowerCase().includes('built-in') ||
           d.label.toLowerCase().includes('facetime') ||
           d.label.toLowerCase().includes('internal')
         );
+
         setSelectedCameraId(builtin?.deviceId || videoDevices[0].deviceId);
       }
     } catch (err) {
       console.error('Failed to enumerate cameras:', err);
     }
-  }, [selectedCameraId]);
+  }, [isVirtualCameraSource, selectedCameraId]);
 
   useEffect(() => {
     enumerateCameras();
@@ -201,26 +282,155 @@ function Dashboard() {
     }
   }, [isStreaming]);
 
-  
+    const playPreviewVideo = useCallback(async (video: HTMLVideoElement | null, context: string) => {
+      if (!video) return;
+
+      try {
+        await video.play();
+      } catch (error) {
+        console.error(`${context} play failed:`, error);
+      }
+    }, []);
+
+    const waitForRenderableStream = useCallback(async (stream: MediaStream) => {
+      const probeVideo = document.createElement('video');
+      const probeCanvas = document.createElement('canvas');
+      const probeContext = probeCanvas.getContext('2d', { willReadFrequently: true });
+
+      if (!probeContext) {
+        throw new Error('Could not create Decart probe context');
+      }
+
+      probeCanvas.width = 32;
+      probeCanvas.height = 18;
+      probeVideo.muted = true;
+      probeVideo.autoplay = true;
+      probeVideo.playsInline = true;
+      probeVideo.srcObject = stream;
+
+      await probeVideo.play().catch(() => {});
+
+      const hasVisiblePixels = () => {
+        if (
+          probeVideo.readyState < HTMLMediaElement.HAVE_CURRENT_DATA ||
+          probeVideo.videoWidth <= 0 ||
+          probeVideo.videoHeight <= 0
+        ) {
+          return false;
+        }
+
+        probeContext.drawImage(probeVideo, 0, 0, probeCanvas.width, probeCanvas.height);
+        const { data } = probeContext.getImageData(0, 0, probeCanvas.width, probeCanvas.height);
+
+        let brightPixelCount = 0;
+        for (let index = 0; index < data.length; index += 4) {
+          const red = data[index];
+          const green = data[index + 1];
+          const blue = data[index + 2];
+
+          if (red > 16 || green > 16 || blue > 16) {
+            brightPixelCount++;
+            if (brightPixelCount >= 8) {
+              return true;
+            }
+          }
+        }
+
+        return false;
+      };
+
+      await new Promise<void>((resolve, reject) => {
+        const cleanup = () => {
+          window.clearTimeout(timeoutId);
+          window.clearInterval(visibilityCheckId);
+          probeVideo.removeEventListener('loadeddata', maybeReady);
+          probeVideo.removeEventListener('playing', maybeReady);
+          probeVideo.removeEventListener('resize', maybeReady);
+        };
+
+        const maybeReady = () => {
+          if (
+            probeVideo.readyState >= HTMLMediaElement.HAVE_CURRENT_DATA &&
+            probeVideo.videoWidth > 0 &&
+            probeVideo.videoHeight > 0
+          ) {
+            const visibleDeadline = window.setTimeout(() => {
+              cleanup();
+              reject(new Error('Timed out waiting for non-black Decart video frames'));
+            }, REMOTE_VIDEO_VISIBLE_TIMEOUT_MS);
+
+            const finishVisibleCheck = () => {
+              window.clearTimeout(visibleDeadline);
+              cleanup();
+              resolve();
+            };
+
+            const visibilityCheck = () => {
+              if (hasVisiblePixels()) {
+                finishVisibleCheck();
+              }
+            };
+
+            visibilityCheck();
+            visibilityCheckId = window.setInterval(visibilityCheck, 100);
+
+            probeVideo.removeEventListener('loadeddata', maybeReady);
+            probeVideo.removeEventListener('playing', maybeReady);
+            probeVideo.removeEventListener('resize', maybeReady);
+          }
+        };
+
+        let visibilityCheckId: number | null = null;
+        const timeoutId = window.setTimeout(() => {
+          cleanup();
+          reject(new Error('Timed out waiting for Decart video frames'));
+        }, REMOTE_VIDEO_READY_TIMEOUT_MS);
+
+        probeVideo.addEventListener('loadeddata', maybeReady);
+        probeVideo.addEventListener('playing', maybeReady);
+        probeVideo.addEventListener('resize', maybeReady);
+        maybeReady();
+      });
+
+      probeVideo.srcObject = null;
+    }, []);
 
   const startWebcam = async () => {
     try {
-      const constraints: MediaStreamConstraints = {
-        video: {
-          width: { ideal: 1280 },
-          height: { ideal: 720 },
-          frameRate: { max: 30, ideal: 24 },
-          facingMode: 'user'
-        },
-        audio: false
-      };
-      if (selectedCameraId) {
-        (constraints.video as MediaTrackConstraints).deviceId = { exact: selectedCameraId };
-      }
-      const stream = await navigator.mediaDevices.getUserMedia(constraints);
+        const buildVideoConstraints = (): MediaTrackConstraints => {
+          const videoConstraints: MediaTrackConstraints = {
+            width: { ideal: DECART_REALTIME_WIDTH },
+            height: { ideal: DECART_REALTIME_HEIGHT },
+            frameRate: { ideal: DECART_REALTIME_FPS, max: DECART_REALTIME_FPS }
+          };
+
+          if (selectedCameraId) {
+            videoConstraints.deviceId = { exact: selectedCameraId };
+          } else {
+            videoConstraints.facingMode = 'user';
+          }
+
+          return videoConstraints;
+        };
+
+        const stream = await navigator.mediaDevices.getUserMedia({
+          video: buildVideoConstraints(),
+          audio: false,
+        });
+
       webcamStreamRef.current = stream;
       if (webcamVideoRef.current) {
         webcamVideoRef.current.srcObject = stream;
+          void playPreviewVideo(webcamVideoRef.current, 'Hidden webcam preview');
+      }
+      if (outputVideoRef.current) {
+        outputVideoRef.current.srcObject = stream;
+        outputVideoRef.current.onloadedmetadata = () => {
+            void playPreviewVideo(outputVideoRef.current, 'Local preview');
+        };
+        if (outputVideoRef.current.readyState >= 1) {
+            void playPreviewVideo(outputVideoRef.current, 'Immediate local preview');
+        }
       }
       return stream;
     } catch (error) {
@@ -248,16 +458,53 @@ function Dashboard() {
         apiKey: apiToken
       });
       
-      const model = models.realtime('lucy-2.1');
+      const model = models.realtime(DECART_REALTIME_MODEL);
 
       const realtimeClient = await client.realtime.connect(stream, {
         model,
-        onRemoteStream: (editedStream: MediaStream) => {
+        customizeOffer: async (offer: RTCSessionDescriptionInit) => {
+          const { offer: sanitizedOffer, removedLines } = stripSimulcastFromOffer(offer);
+          if (removedLines.length > 0) {
+            emitElectronLog('info', '[Decart] Stripped simulcast SDP lines from offer', removedLines);
+          }
+          return sanitizedOffer;
+        },
+        onRemoteStream: async (editedStream: MediaStream) => {
           const video = outputVideoRef.current;
           if (!video) return;
 
-          if (video.srcObject) {
-            video.srcObject = null;
+          // Only swap the video source if the edited stream actually has a
+          // live video track. Otherwise keep showing/streaming the raw
+          // local webcam so the virtual camera never goes black.
+          const liveTracks = editedStream
+            ?.getVideoTracks?.()
+            .filter((t) => t.readyState === 'live') ?? [];
+          if (liveTracks.length === 0) {
+            console.warn('[Decart] onRemoteStream had no live video tracks; keeping local stream');
+            emitElectronLog('warn', '[Decart] onRemoteStream had no live video tracks; keeping local stream');
+            return;
+          }
+
+          console.info(
+            '[Decart] Remote stream received',
+            liveTracks.map((track) => track.getSettings())
+          );
+          emitElectronLog(
+            'info',
+            '[Decart] Remote stream received',
+            liveTracks.map((track) => track.getSettings())
+          );
+
+          try {
+            await waitForRenderableStream(editedStream);
+          } catch (renderError) {
+            console.warn('[Decart] Remote stream was live but never produced visible frames; keeping local preview', renderError);
+            emitElectronLog(
+              'warn',
+              '[Decart] Remote stream was live but never produced visible frames; keeping local preview',
+              String(renderError)
+            );
+            return;
           }
 
           video.srcObject = editedStream;
@@ -265,12 +512,14 @@ function Dashboard() {
           (video as any).latencyHint = 'interactive';
 
           video.onloadedmetadata = () => {
-            video.play().catch(() => {});
+            void playPreviewVideo(video, 'Decart remote preview');
           };
 
           if (video.readyState >= 2) {
-            video.play().catch(() => {});
+            void playPreviewVideo(video, 'Immediate Decart remote preview');
           }
+
+          startVirtualCamera(video);
         },
         initialState: {
           prompt: {
@@ -278,6 +527,62 @@ function Dashboard() {
             enhance: true
           }
         }
+      });
+
+      let lastStatsLogAt = 0;
+
+      realtimeClient.on?.('connectionChange', (state) => {
+        emitElectronLog('info', '[Decart] Connection state', state);
+      });
+
+      realtimeClient.on?.('error', (sdkError) => {
+        emitElectronLog('error', '[Decart] Client error event', sdkError?.message || sdkError);
+      });
+
+      realtimeClient.on?.('diagnostic', (event) => {
+        if (!event?.name) return;
+
+        if (
+          event.name === 'videoStall' ||
+          event.name === 'phaseTiming' ||
+          event.name === 'reconnect' ||
+          event.name === 'peerConnectionStateChange' ||
+          event.name === 'iceStateChange' ||
+          event.name === 'signalingStateChange' ||
+          event.name === 'selectedCandidatePair'
+        ) {
+          emitElectronLog('info', `[Decart] Diagnostic ${event.name}`, event.data);
+        }
+      });
+
+      realtimeClient.on?.('stats', (stats) => {
+        const now = Date.now();
+        const shouldLogLowFps = Boolean(stats?.video && stats.video.framesPerSecond < 1);
+        const shouldLogQualityLimit = Boolean(
+          stats?.outboundVideo &&
+          stats.outboundVideo.qualityLimitationReason &&
+          stats.outboundVideo.qualityLimitationReason !== 'none'
+        );
+
+        if (!shouldLogLowFps && !shouldLogQualityLimit && now - lastStatsLogAt < 5000) {
+          return;
+        }
+
+        lastStatsLogAt = now;
+        emitElectronLog('info', '[Decart] Stats', {
+          inboundVideoFps: stats?.video?.framesPerSecond ?? null,
+          inboundVideoSize: stats?.video
+            ? `${stats.video.frameWidth}x${stats.video.frameHeight}`
+            : null,
+          inboundFreezeCount: stats?.video?.freezeCount ?? null,
+          outboundVideoFps: stats?.outboundVideo?.framesPerSecond ?? null,
+          outboundVideoSize: stats?.outboundVideo
+            ? `${stats.outboundVideo.frameWidth}x${stats.outboundVideo.frameHeight}`
+            : null,
+          qualityLimitationReason: stats?.outboundVideo?.qualityLimitationReason ?? null,
+          availableOutgoingBitrate: stats?.connection?.availableOutgoingBitrate ?? null,
+          currentRoundTripTime: stats?.connection?.currentRoundTripTime ?? null,
+        });
       });
 
       realtimeClientRef.current = realtimeClient as any;
@@ -297,22 +602,32 @@ function Dashboard() {
         }
       } catch (setError) {
         console.error('[Decart] Failed to apply initial transformation:', setError);
+        emitElectronLog('warn', '[Decart] Failed to apply initial transformation', String(setError));
       }
 
       return realtimeClient as any;
     } catch (error: any) {
       console.error('[Decart] SDK error:', error);
-      toast.error('Failed to connect to AI');
+      emitElectronLog('error', '[Decart] SDK error', error?.message || String(error));
+      const errorMessage =
+        error?.message ||
+        error?.cause?.message ||
+        error?.data?.message ||
+        'Failed to connect to AI';
+      toast.error(errorMessage);
       
       if (outputVideoRef.current) {
         outputVideoRef.current.srcObject = stream;
         outputVideoRef.current.play().catch(() => {});
+        startVirtualCamera(outputVideoRef.current);
       }
       
       const mockClient: RealtimeClient = {
         disconnect: () => {},
         set: async () => {},
-        setPrompt: async () => {}
+        setPrompt: async () => {},
+        on: () => {},
+        off: () => {}
       };
       
       realtimeClientRef.current = mockClient;
@@ -321,6 +636,7 @@ function Dashboard() {
   };
 
   const disconnectFromDecart = () => {
+    stopVirtualCamera();
     if (realtimeClientRef.current) {
       realtimeClientRef.current.disconnect();
       realtimeClientRef.current = null;
@@ -346,71 +662,103 @@ function Dashboard() {
       }
 
       if (response.shouldStop || response.forceEnd) {
+        emitElectronLog('warn', '[Session] Auto-stopping from status poll', response);
         await handleStop(false);
         toast.error('Session auto-ended - Insufficient credits');
       }
     } catch (error) {
       console.error('Poll error:', error);
+      emitElectronLog('error', '[Session] Poll error', String(error));
     }
   }, [setCredits, user?.id]);
 
   const handleStart = async () => {
+    if (!user?.id) {
+      toast.error('Please sign in before starting a session.');
+      return;
+    }
+
     setIsLoading(true);
+    let sessionOpened = false;
+
     try {
-      const [startResponse, stream] = await Promise.all([
-        apiRequest<{ allowed: boolean; token?: string; error?: string; credits?: number; maxSeconds?: number }>('/start-session', {
-          method: 'POST',
-          body: JSON.stringify({ userId: user?.id })
-        }).catch(e => {
-          throw e; // Handled by outer catch
-        }),
-        startWebcam()
-      ]);
-        
-      if (!startResponse.allowed) {
-        toast.error(startResponse.error || 'Insufficient credits');
-        if (stream) {
-          stream.getTracks().forEach(track => track.stop());
-        }
-        setIsLoading(false);
-        return;
-      }
-
-      if (isFiniteNumber(startResponse.credits)) {
-        setCredits(startResponse.credits);
-      } else if (startResponse.credits !== undefined) {
-        console.error('Invalid credit response', startResponse);
-      }
-        
-      const sessionToken = startResponse.token || '';
-
+      const stream = await startWebcam();
       if (!stream) {
-        setIsLoading(false);
         return;
       }
 
-      await connectToDecart(stream, sessionToken);
+      if (outputVideoRef.current) {
+        startVirtualCamera(outputVideoRef.current);
+      }
+
+      const sessionResponse = await apiRequest<{
+        allowed: boolean;
+        error?: string;
+        token?: string;
+        credits?: number;
+      }>('/start-session', {
+        method: 'POST',
+        body: JSON.stringify({ userId: user.id })
+      });
+
+      if (!sessionResponse.allowed) {
+        throw new Error(sessionResponse.error || 'Unable to start session.');
+      }
+
+      sessionOpened = true;
+
+      if (isFiniteNumber(sessionResponse.credits)) {
+        setCredits(sessionResponse.credits);
+      }
+
+      if (!sessionResponse.token) {
+        throw new Error('Decart token missing from start-session response.');
+      }
+
+      await connectToDecart(stream, sessionResponse.token);
+
+      if (pollIntervalRef.current) {
+        clearInterval(pollIntervalRef.current);
+      }
+      pollIntervalRef.current = setInterval(() => {
+        void pollSessionStatus();
+      }, POLLING_INTERVAL);
+      void pollSessionStatus();
 
       setIsStreaming(true);
       setSessionStatus('LIVE');
-      await pollSessionStatus();
-      
-      try {
-        pollIntervalRef.current = setInterval(pollSessionStatus, POLLING_INTERVAL);
-      } catch {
-        console.warn('Polling not available');
-      }
-      
     } catch (error) {
       console.error('Start session error:', error);
-      toast.error('Failed to start session');
+
+      if (sessionOpened) {
+        try {
+          await apiRequest('/end-session', {
+            method: 'POST',
+            body: JSON.stringify({ userId: user.id })
+          });
+        } catch (cleanupError) {
+          console.error('Session cleanup error:', cleanupError);
+        }
+      }
+
+      if (pollIntervalRef.current) {
+        clearInterval(pollIntervalRef.current);
+        pollIntervalRef.current = null;
+      }
+
+      toast.error(error instanceof Error ? error.message : 'Failed to start session');
       stopWebcam();
       disconnectFromDecart();
+      setIsStreaming(false);
+      setSessionStatus('IDLE');
+    } finally {
+      setIsLoading(false);
     }
-    setIsLoading(false);
   };
 
   async function handleStop(showToast = true) {
+    emitElectronLog('info', '[Session] handleStop called', { showToast });
+
     try {
       const response = await apiRequest<{ remainingCredits?: number }>('/end-session', {
         method: 'POST',
@@ -519,6 +867,14 @@ function Dashboard() {
 
       {/* Main Content Area */}
       <main className="flex-1 relative flex items-center justify-center bg-[#171717] rounded-tl-lg rounded-tr-lg border-t border-l border-r border-[#222222] sm:mx-0 mx-0 mt-2 overflow-hidden shadow-inner">
+        <video
+          ref={webcamVideoRef}
+          autoPlay
+          playsInline
+          muted
+          className="hidden"
+         />
+
          <video 
             id="output"
             ref={outputVideoRef}
