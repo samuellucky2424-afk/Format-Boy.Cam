@@ -9,10 +9,10 @@ This guide explains how to set up GitHub Actions to automatically build, release
 When you push a version tag (e.g., `v1.0.0`), GitHub Actions will:
 - Check out your code
 - Install dependencies  
-- Build the Windows .exe using `npm run electron:build`
+- Build the Windows installer using `npm run electron:release`
 - Calculate the SHA256 hash
 - Create a GitHub Release
-- Upload the .exe as a release asset
+- Upload the tag-matched installer as a release asset
 
 ### 2. Updated `/api/version` Endpoint
 The endpoint now supports GitHub Releases as the primary source:
@@ -34,9 +34,9 @@ git push origin main
 On your Vercel dashboard, add these environment variables to your project:
 
 ```
-DESKTOP_GITHUB_OWNER=lucky  # Your GitHub username/organization
-DESKTOP_GITHUB_REPO=Format-Boy  # Your repository name
-DESKTOP_GITHUB_EXE_PATTERN=Format-Boy.*\.exe$  # Regex pattern for the .exe filename
+DESKTOP_GITHUB_OWNER=samuellucky2424-afk  # Your GitHub username/organization
+DESKTOP_GITHUB_REPO=Format-Boy.Cam  # Your repository name
+DESKTOP_GITHUB_EXE_PATTERN=^Format-Boy CAM Desktop Setup .*\.exe$  # Regex pattern for the installer filename
 ```
 
 **Optional:** If you still want to keep Supabase as a fallback, leave those variables as-is. GitHub will be checked first.
@@ -72,9 +72,9 @@ If you want to test the workflow locally or need to use secrets:
    ```
 
 4. **GitHub Actions automatically:**
-   - Builds the .exe
-   - Creates a Release: `https://github.com/lucky/Format-Boy/releases/tag/v1.0.1`
-   - Uploads the .exe as a release asset
+   - Builds the Windows installer
+   - Creates a Release: `https://github.com/samuellucky2424-afk/Format-Boy.Cam/releases/tag/v1.0.1`
+   - Uploads the installer as a release asset
    - Includes SHA256 hash in the release notes
 
 5. **Your app immediately detects the update:**
@@ -105,13 +105,13 @@ SHA256: abc123def456...
 ```
 DESKTOP_GITHUB_OWNER        # GitHub username/org
 DESKTOP_GITHUB_REPO         # Repository name  
-DESKTOP_GITHUB_EXE_PATTERN  # Regex for .exe filename (default: Format-Boy.*\.exe$)
+DESKTOP_GITHUB_EXE_PATTERN  # Regex for the installer filename
 ```
 
 ### Supabase Mode (OLD - Fallback)
 ```
 DESKTOP_SUPABASE_BUCKET     # Bucket name
-DESKTOP_SUPABASE_PATH       # Path template (e.g., updates/v{version}/app.exe)
+DESKTOP_SUPABASE_PATH       # Path template (e.g., desktop/Format-Boy CAM Desktop Setup {version}.exe)
 DESKTOP_SUPABASE_ACCESS     # 'public' or 'signed' (default: signed)
 ```
 
@@ -150,11 +150,11 @@ Should return something like:
 ```json
 {
   "version": "1.0.1",
-  "download_url": "https://github.com/lucky/Format-Boy/releases/download/v1.0.1/Format-Boy-Desktop-Setup-1.0.1.exe",
-  "artifact_type": "portable",
+   "download_url": "https://github.com/samuellucky2424-afk/Format-Boy.Cam/releases/download/v1.0.1/Format-Boy%20CAM%20Desktop%20Setup%201.0.1.exe",
+   "artifact_type": "installer",
   "sha256": "abc123...",
   "notes": "Release notes here...",
-  "file_name": "Format-Boy-Desktop-Setup-1.0.1.exe",
+   "file_name": "Format-Boy CAM Desktop Setup 1.0.1.exe",
   "source": "github-release"
 }
 ```
@@ -169,10 +169,10 @@ Should return something like:
 ### Build fails in workflow
 - Check the Actions logs for specific errors
 - Verify all environment secrets are set (on Actions settings)
-- Test `npm run electron:build` locally first
+- Test `npm run electron:release` locally first
 
 ### `/api/version` returns wrong data
-- Verify `DESKTOP_GITHUB_OWNER` and `DESKTOP_GITHUB_REPO` are set correctly
+- Verify `DESKTOP_GITHUB_OWNER`, `DESKTOP_GITHUB_REPO`, and `DESKTOP_GITHUB_EXE_PATTERN` are set correctly
 - Check that the .exe was successfully uploaded to the Release
 - Look at Vercel Function logs for errors
 

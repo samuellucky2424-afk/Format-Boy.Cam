@@ -30,9 +30,9 @@ Or leave them blank to use defaults from your package build.
 On Vercel Dashboard > Project Settings > Environment Variables:
 
 **Required:**
-- `DESKTOP_GITHUB_OWNER` = `lucky`
-- `DESKTOP_GITHUB_REPO` = `Format-Boy`
-- `DESKTOP_GITHUB_EXE_PATTERN` = `Format-Boy.*\.exe$`
+- `DESKTOP_GITHUB_OWNER` = `samuellucky2424-afk`
+- `DESKTOP_GITHUB_REPO` = `Format-Boy.Cam`
+- `DESKTOP_GITHUB_EXE_PATTERN` = `^Format-Boy CAM Desktop Setup .*\.exe$`
 
 (See `VERCEL_CONFIG.md` for complete guide)
 
@@ -74,11 +74,11 @@ Within 15 seconds on your desktop app:
          ↓
 2. GitHub Actions triggers automatically
          ↓
-3. Builds Windows .exe
+3. Builds Windows installer
          ↓
 4. Creates GitHub Release
          ↓
-5. Uploads .exe to release
+5. Uploads installer to release
          ↓
 6. Desktop app periodically calls /api/version
          ↓

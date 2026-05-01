@@ -2,10 +2,13 @@
 import path from 'path';
 import { supabaseAdmin, supabaseAdminConfigError } from './supabase.js';
 
-const FALLBACK_VERSION = '1.1.0';
-const FALLBACK_DOWNLOAD_URL = 'https://mega.nz/file/yDZVDBQJ#jOM2bnxJuGUqBp3qri_8sCgFGJb3pbEiIv-4DI-WZA8';
-const FALLBACK_ARTIFACT_TYPE = 'portable';
+const FALLBACK_VERSION = '2.0.1';
+const FALLBACK_DOWNLOAD_URL = '';
+const FALLBACK_ARTIFACT_TYPE = 'installer';
 const DEFAULT_SIGNED_URL_EXPIRES = 60 * 60 * 2;
+const DEFAULT_GITHUB_OWNER = 'samuellucky2424-afk';
+const DEFAULT_GITHUB_REPO = 'Format-Boy.Cam';
+const DEFAULT_GITHUB_EXE_PATTERN = '^Format-Boy CAM Desktop Setup .*\\.exe$';
 
 function trimSlashes(value = '') {
   return String(value).replace(/^\/+|\/+$/g, '').trim();
@@ -64,9 +67,9 @@ export default async function handler(req, res) {
   if (req.method !== 'GET') return res.status(405).json({ error: 'Method not allowed' });
 
   // Try GitHub releases first if configured
-  const githubOwner = String(process.env.DESKTOP_GITHUB_OWNER || '').trim();
-  const githubRepo = String(process.env.DESKTOP_GITHUB_REPO || '').trim();
-  const githubExePattern = String(process.env.DESKTOP_GITHUB_EXE_PATTERN || 'Format-Boy.*\\.exe$').trim();
+  const githubOwner = String(process.env.DESKTOP_GITHUB_OWNER || DEFAULT_GITHUB_OWNER).trim();
+  const githubRepo = String(process.env.DESKTOP_GITHUB_REPO || DEFAULT_GITHUB_REPO).trim();
+  const githubExePattern = String(process.env.DESKTOP_GITHUB_EXE_PATTERN || DEFAULT_GITHUB_EXE_PATTERN).trim();
   
   if (githubOwner && githubRepo) {
     const gitHubRelease = await fetchGitHubRelease(githubOwner, githubRepo, new RegExp(githubExePattern, 'i'));
@@ -143,10 +146,18 @@ export default async function handler(req, res) {
     }
   }
 
+  if (!downloadUrl) {
+    return res.status(503).json({
+      error: 'No desktop release download is configured',
+      version,
+      source,
+    });
+  }
+
   return res.status(200).json({
     version,
     download_url: downloadUrl,
-    artifact_type: artifactType === 'installer' ? 'installer' : 'portable',
+    artifact_type: artifactType === 'portable' ? 'portable' : 'installer',
     sha256: sha256 || undefined,
     notes: notes || undefined,
     file_name: path.basename(downloadUrl.split('?')[0] || ''),

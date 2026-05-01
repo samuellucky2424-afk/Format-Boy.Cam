@@ -7,15 +7,15 @@ These tell your `/api/version` endpoint where to find your releases:
 
 ```
 Name: DESKTOP_GITHUB_OWNER
-Value: lucky
+Value: samuellucky2424-afk
 Environment: Production
 
 Name: DESKTOP_GITHUB_REPO
-Value: Format-Boy
+Value: Format-Boy.Cam
 Environment: Production
 
 Name: DESKTOP_GITHUB_EXE_PATTERN
-Value: Format-Boy.*\.exe$
+Value: ^Format-Boy CAM Desktop Setup .*\.exe$
 Environment: Production
 ```
 
@@ -49,7 +49,7 @@ Value: [bucket-name]
 Environment: Production
 
 Name: DESKTOP_SUPABASE_PATH
-Value: updates/v{version}/app.exe
+Value: desktop/Format-Boy CAM Desktop Setup {version}.exe
 Environment: Production
 
 Name: DESKTOP_SUPABASE_ACCESS

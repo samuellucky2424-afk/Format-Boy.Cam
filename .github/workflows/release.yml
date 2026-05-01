@@ -16,6 +16,13 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v4
 
+      - name: Clean previous release output
+        shell: powershell
+        run: |
+          if (Test-Path "./app/release") {
+            Remove-Item "./app/release" -Recurse -Force
+          }
+
       - name: Set up Node.js
         uses: actions/setup-node@v4
         with:
@@ -25,27 +32,38 @@ jobs:
         working-directory: ./app
         run: npm ci
 
+      - name: Build native camera binaries (cmake)
+        shell: powershell
+        run: |
+          cmake -S native-camera -B native-camera/build -A x64
+          cmake --build native-camera/build --config Release
+          Write-Host "Native camera build output:"
+          Get-ChildItem -Path "native-camera/build/Release" | Select-Object Name
 
       - name: Build app
         working-directory: ./app
-        run: npm run electron:build
+        run: npm run electron:release
         env:
           NODE_OPTIONS: --max-old-space-size=4096
 
-      - name: Find built executable
-        id: find_exe
+      - name: Find built installer
+        id: find_installer
         shell: powershell
         run: |
+          $version = "${{ github.ref_name }}" -replace '^v', ''
+          $expectedInstaller = "Format-Boy CAM Desktop Setup $version.exe"
+
           Write-Host "Listing ./app/release folder:"
           Get-ChildItem -Path "./app/release" -Recurse | Select-Object FullName | Format-List
-          $exe = Get-ChildItem -Path "./app/release" -Filter "*.exe" -Recurse | Where-Object { $_.Name -notmatch "blockmap" } | Select-Object -First 1
+
+          $exe = Get-ChildItem -Path "./app/release" -Filter $expectedInstaller -Recurse | Select-Object -First 1
           if ($exe) {
             $relativePath = "app/release/$($exe.Name)"
             echo "exe_path=$relativePath" >> $env:GITHUB_OUTPUT
             echo "exe_name=$($exe.Name)" >> $env:GITHUB_OUTPUT
             Write-Host "Found executable: $relativePath"
           } else {
-            Write-Host "No executable found in ./app/release"
+            Write-Host "Expected installer not found: $expectedInstaller"
             Get-ChildItem -Path "./app/release" -Recurse | Format-List
             exit 1
           }
@@ -54,14 +72,14 @@ jobs:
         id: sha256
         shell: powershell
         run: |
-          $hash = (Get-FileHash -Path "${{ steps.find_exe.outputs.exe_path }}" -Algorithm SHA256).Hash
+          $hash = (Get-FileHash -Path "${{ steps.find_installer.outputs.exe_path }}" -Algorithm SHA256).Hash
           echo "hash=$hash" >> $env:GITHUB_OUTPUT
           Write-Host "SHA256: $hash"
 
       - name: Create Release and Upload Asset
         uses: softprops/action-gh-release@v1
         with:
-          files: ${{ steps.find_exe.outputs.exe_path }}
+          files: ${{ steps.find_installer.outputs.exe_path }}
           body: |
             ## Format-Boy Desktop ${{ github.ref_name }}
             

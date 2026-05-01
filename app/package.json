@@ -1,7 +1,7 @@
 {
     "name":  "my-app",
     "private":  true,
-    "version":  "2.0.0",
+    "version":  "2.0.1",
     "type":  "module",
     "main":  "electron/main.js",
     "build":  {
@@ -14,6 +14,7 @@
                                 "dist/**/*",
                                 "electron/**/*"
                             ],
+                  "afterPack":  "build/afterPack.cjs",
                   "extraResources":  [
                                          {
                                              "from":  ".env",
@@ -26,7 +27,12 @@
                                          ],
                               "executableName":  "Format-Boy-Desktop",
                               "icon":  "public/icon.ico"
-                          }
+                          },
+                  "nsis":  {
+                               "allowElevation":  true,
+                               "perMachine":  true,
+                               "include":  "build/installer.nsh"
+                           }
               },
     "scripts":  {
                     "dev":  "vite",
@@ -34,7 +40,8 @@
                     "lint":  "eslint .",
                     "preview":  "vite preview",
                     "electron:dev":  "electron .",
-                    "electron:build":  "npm run build \u0026\u0026 electron-builder --win"
+                    "electron:build":  "npm run build \u0026\u0026 electron-builder --win",
+                    "electron:release":  "npm run build \u0026\u0026 electron-builder --win --publish never"
                 },
     "dependencies":  {
                          "@decartai/sdk":  "^0.0.56",
