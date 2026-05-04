@@ -1,0 +1,13 @@
+.kilocode/
+app/release*/
+app/release*/**
+app/release-validation/
+app/release-validation/**
+**/win-unpacked/
+**/win-unpacked/**
+**/*.exe
+**/*.dll
+**/*.pak
+**/*.bin
+**/*.dat
+**/*.blockmap
