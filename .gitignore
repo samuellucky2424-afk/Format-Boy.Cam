@@ -10,5 +10,8 @@ yarn-error.log*
 release/
 build_output.txt
 app/release/
+app/release-*/
+app/release-validation/
 app/dist/
 native-camera/build/
+.vercel/
