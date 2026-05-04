@@ -3,6 +3,8 @@ import { supabaseAdmin, supabaseAdminConfigError } from './supabase.js';
 import { getWalletByUserId, logCreditUpdate, updateWalletCredits } from './credit-utils.js';
 
 const CREDITS_PER_SECOND = 2;
+const MAX_SESSION_DURATION = 600;
+const HEARTBEAT_GRACE_SECONDS = 3;
 
 async function closeActiveSession(userId, activeSession) {
   try {
@@ -10,13 +12,36 @@ async function closeActiveSession(userId, activeSession) {
     if (!wallet) throw new Error('Wallet not found');
 
     const actualCredits = wallet.credits;
-    let startTimeStr = activeSession.start_time;
+    let startTimeStr = typeof activeSession?.start_time === 'string'
+      ? activeSession.start_time
+      : activeSession?.start_time
+        ? new Date(activeSession.start_time).toISOString()
+        : new Date().toISOString();
     if (!startTimeStr.endsWith('Z') && !startTimeStr.includes('+')) {
       startTimeStr = startTimeStr.replace(' ', 'T') + 'Z';
     }
     const startTime = new Date(startTimeStr).getTime();
-    const elapsedSeconds = Math.max(0, Math.floor((Date.now() - startTime) / 1000));
-    const cost = Math.round(elapsedSeconds * CREDITS_PER_SECOND);
+
+    const metadata = activeSession?.metadata && typeof activeSession.metadata === 'object'
+      ? activeSession.metadata
+      : {};
+
+    const lastHeartbeatRaw = metadata?.last_heartbeat;
+    const lastHeartbeatMs = typeof lastHeartbeatRaw === 'string' ? new Date(lastHeartbeatRaw).getTime() : NaN;
+
+    const nowMs = Date.now();
+    const maxEndMs = startTime + MAX_SESSION_DURATION * 1000;
+
+    const billingEndMs = Number.isFinite(lastHeartbeatMs)
+      ? Math.min(nowMs, lastHeartbeatMs + HEARTBEAT_GRACE_SECONDS * 1000, maxEndMs)
+      : Math.min(nowMs, maxEndMs);
+
+    const billableMs = Math.max(0, billingEndMs - startTime);
+    const elapsedSeconds = Math.floor(billableMs / 1000);
+    const creditsPerSecond = Number.isFinite(activeSession?.credits_per_second)
+      ? activeSession.credits_per_second
+      : CREDITS_PER_SECOND;
+    const cost = Math.round(elapsedSeconds * creditsPerSecond);
     
     const finalCost = Math.min(actualCredits, cost);
     const newCredits = Math.max(0, actualCredits - finalCost);
@@ -24,7 +49,11 @@ async function closeActiveSession(userId, activeSession) {
     await supabaseAdmin
       .from('sessions')
       .update({
-        end_time: new Date(), cost: finalCost, seconds_used: elapsedSeconds, status: 'ended'
+        end_time: new Date(billingEndMs).toISOString(),
+        cost: finalCost,
+        seconds_used: elapsedSeconds,
+        credits_used: finalCost,
+        status: 'ended'
       }).eq('id', activeSession.id).eq('status', 'active');
 
     const updatedWallet = await updateWalletCredits(userId, newCredits);

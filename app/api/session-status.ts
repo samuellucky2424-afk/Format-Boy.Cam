@@ -33,18 +33,40 @@ export default async function handler(req, res) {
       return res.json({ secondsUsed: 0, creditsUsed: 0, remainingCredits: actualCredits, credits: actualCredits, shouldStop: false, forceEnd: false });
     }
 
-    let startTimeStr = activeSession.start_time;
+    try {
+      const nowIso = new Date().toISOString();
+      const metadata = activeSession?.metadata && typeof activeSession.metadata === 'object'
+        ? activeSession.metadata
+        : {};
+
+      await supabaseAdmin
+        .from('sessions')
+        .update({ metadata: { ...metadata, last_heartbeat: nowIso } })
+        .eq('id', activeSession.id)
+        .eq('status', 'active');
+    } catch (heartbeatError) {
+      console.error('Failed to update session heartbeat:', heartbeatError);
+    }
+
+    let startTimeStr = typeof activeSession?.start_time === 'string'
+      ? activeSession.start_time
+      : activeSession?.start_time
+        ? new Date(activeSession.start_time).toISOString()
+        : new Date().toISOString();
     if (!startTimeStr.endsWith('Z') && !startTimeStr.includes('+')) {
       startTimeStr = startTimeStr.replace(' ', 'T') + 'Z';
     }
     const startTime = new Date(startTimeStr).getTime();
     
     // Prevent negative seconds if there is a tiny clock drift
-    const elapsedSeconds = Math.max(0, Math.floor((Date.now() - startTime) / 1000));
+    const elapsedSeconds = Math.min(
+      MAX_SESSION_DURATION,
+      Math.max(0, Math.floor((Date.now() - startTime) / 1000))
+    );
     const cost = Math.round(elapsedSeconds * CREDITS_PER_SECOND);
     
     const remainingCredits = Math.max(0, actualCredits - cost);
-    const shouldStop = (remainingCredits <= 0) || (elapsedSeconds > MAX_SESSION_DURATION);
+    const shouldStop = remainingCredits <= 0 || elapsedSeconds >= MAX_SESSION_DURATION;
     const forceEnd = remainingCredits <= 0;
 
     res.json({ secondsUsed: elapsedSeconds, creditsUsed: cost, cost, remainingCredits, credits: remainingCredits, shouldStop, forceEnd });

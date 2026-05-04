@@ -200,7 +200,13 @@ function Dashboard() {
   }, []);
 
   useEffect(() => {
-        return () => {
+    return () => {
+      if (user?.id) {
+        void apiRequest('/end-session', {
+          method: 'POST',
+          body: JSON.stringify({ userId: user.id })
+        }).catch(() => {});
+      }
       if (pollIntervalRef.current) {
         clearInterval(pollIntervalRef.current);
       }
@@ -213,7 +219,7 @@ function Dashboard() {
       stopVirtualCamera();
       closeObsPreviewWindow(false);
     };
-  }, [closeObsPreviewWindow, stopVirtualCamera]);
+  }, [closeObsPreviewWindow, stopVirtualCamera, user?.id]);
 
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
