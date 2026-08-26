@@ -5,6 +5,7 @@ import path from 'path';
 import { fileURLToPath } from 'url';
 import dotenv from 'dotenv';
 import fs from 'fs';
+import os from 'os';
 import { spawn, execFile } from 'child_process';
 import { registerUpdaterIpc, scheduleBackgroundUpdateCheck } from './updater.js';
 
@@ -13,13 +14,18 @@ import { registerUpdaterIpc, scheduleBackgroundUpdateCheck } from './updater.js'
 // ---------------------------------------------------------------------------
 let vcamPublisher         = null;
 let vcamPublisherReady    = false;
-const PIPE_FRAME_MAGIC    = 0x4642434D; // "FBCM"
+let vcamPublisherWritable = true;
+const PIPE_FRAME_MAGIC    = 0x484E5348; // "HNSH"
 const PIPE_PROTOCOL_VER   = 1;
 const VCAM_FRAME_WIDTH    = 1280;
 const VCAM_FRAME_HEIGHT   = 720;
 const VCAM_FPS            = 30;
 const VCAM_FRAME_STRIDE   = VCAM_FRAME_WIDTH * 4;
 const VCAM_FRAME_BYTES    = VCAM_FRAME_STRIDE * VCAM_FRAME_HEIGHT;
+const WINDOWS_BUILD       = process.platform === 'win32'
+  ? Number.parseInt(os.release().split('.')[2] || '0', 10)
+  : 0;
+const USE_AKVCAM_BACKEND  = process.platform === 'win32' && WINDOWS_BUILD < 22000;
 
 function makeSolidRgbaFrame(r = 0, g = 0, b = 0, a = 255) {
   const frame = Buffer.alloc(VCAM_FRAME_BYTES);
@@ -40,7 +46,7 @@ function normalizeRendererFrame(rgbaBuffer, width, height) {
     return Buffer.from(SOLID_BLACK_RGBA);
   }
 
-  if (process.env.FORMATBOY_VCAM_TEST_PATTERN === '1') {
+  if (process.env.HENSHIN_VCAM_TEST_PATTERN === '1') {
     return Buffer.from(SOLID_GREEN_RGBA);
   }
 
@@ -57,7 +63,7 @@ function normalizeRendererFrame(rgbaBuffer, width, height) {
 
 function getNativeBinDir() {
   if (app.isPackaged) {
-    return path.join(process.resourcesPath, 'formatboy-cam');
+    return path.join(process.resourcesPath, 'henshin-cam');
   }
   // Dev: support both app-local and repo-root native-camera layouts.
   const appDir = path.dirname(path.dirname(fileURLToPath(import.meta.url)));
@@ -70,17 +76,25 @@ function getNativeBinDir() {
 }
 
 function getRegistrarPath() {
-  return path.join(getNativeBinDir(), 'formatboy_cam_registrar.exe');
+  return path.join(getNativeBinDir(), 'henshin_cam_registrar.exe');
 }
 
 function getPublisherPath() {
-  return path.join(getNativeBinDir(), 'formatboy_cam_pipe_publisher.exe');
+  return path.join(getNativeBinDir(), 'henshin_cam_pipe_publisher.exe');
+}
+
+function getAkVCamManagerPath() {
+  if (app.isPackaged) {
+    return path.join(process.resourcesPath, 'akvirtualcamera', 'x64', 'AkVCamManager.exe');
+  }
+  const appDir = path.dirname(path.dirname(fileURLToPath(import.meta.url)));
+  return path.join(appDir, 'vendor', 'akvirtualcamera', 'x64', 'AkVCamManager.exe');
 }
 
 // Run the registrar probe; if unhealthy, run install.
 // Only attempts repair in the packaged app (installer already ran elevated).
 function ensureVCamRegistration() {
-  if (!app.isPackaged) return; // dev build — skip
+  if (!app.isPackaged || USE_AKVCAM_BACKEND) return; // dev/Windows 10 — skip
   const registrar = getRegistrarPath();
   if (!fs.existsSync(registrar)) return;
 
@@ -99,7 +113,7 @@ function ensureVCamRegistration() {
 
 // Spawn the frame-publisher child process.
 function startVCamPublisher() {
-  const publisherPath = getPublisherPath();
+  const publisherPath = USE_AKVCAM_BACKEND ? getAkVCamManagerPath() : getPublisherPath();
   if (!fs.existsSync(publisherPath)) {
     console.error('[vcam-publisher] executable not found at', publisherPath);
     return;
@@ -107,7 +121,10 @@ function startVCamPublisher() {
 
   if (vcamPublisher) return; // already running
 
-  vcamPublisher = spawn(publisherPath, [], {
+  const publisherArgs = USE_AKVCAM_BACKEND
+    ? ['stream', 'HenshinCamera', 'BGRA', String(VCAM_FRAME_WIDTH), String(VCAM_FRAME_HEIGHT), '-f', String(VCAM_FPS)]
+    : [];
+  vcamPublisher = spawn(publisherPath, publisherArgs, {
     stdio: ['pipe', 'ignore', 'pipe'],
     windowsHide: true,
   });
@@ -119,6 +136,7 @@ function startVCamPublisher() {
     console.warn('[vcam-publisher] exited with code', code);
     vcamPublisher      = null;
     vcamPublisherReady = false;
+    vcamPublisherWritable = true;
     // Auto-restart after 2 s if the app is still running
     setTimeout(() => { if (!app.isQuitting) startVCamPublisher(); }, 2000);
   });
@@ -129,8 +147,13 @@ function startVCamPublisher() {
       vcamPublisher.kill();
     }
   });
+  vcamPublisher.stdin.on('drain', () => {
+    vcamPublisherWritable = true;
+  });
 
   vcamPublisherReady = true;
+  vcamPublisherWritable = true;
+  console.log(`[vcam-publisher] using ${USE_AKVCAM_BACKEND ? 'akvirtualcamera DirectShow' : 'Henshin Media Foundation'} backend`);
 }
 
 function stopVCamPublisher() {
@@ -139,6 +162,7 @@ function stopVCamPublisher() {
     vcamPublisher.kill();
     vcamPublisher      = null;
     vcamPublisherReady = false;
+    vcamPublisherWritable = true;
   }
 }
 
@@ -146,7 +170,7 @@ function stopVCamPublisher() {
 // The renderer sends RGBA (browser-native); we swap R↔B here so the DLL
 // receives BGRA as it expects.
 function writeFrameToPublisher(rgbaBuffer, width, height) {
-  if (!vcamPublisher || !vcamPublisherReady) return;
+  if (!vcamPublisher || !vcamPublisherReady || !vcamPublisherWritable) return;
 
   const stride       = VCAM_FRAME_STRIDE;
   const payloadBytes = VCAM_FRAME_BYTES;
@@ -175,8 +199,9 @@ function writeFrameToPublisher(rgbaBuffer, width, height) {
   header.writeBigInt64LE(timestampHns,   32);
 
   try {
-    vcamPublisher.stdin.write(header);
-    vcamPublisher.stdin.write(bgra);
+    vcamPublisherWritable = USE_AKVCAM_BACKEND
+      ? vcamPublisher.stdin.write(bgra)
+      : vcamPublisher.stdin.write(Buffer.concat([header, bgra]));
   } catch (e) {
     // Ignore EPIPE here — the 'error' handler on stdin will trigger restart
   }
@@ -185,127 +210,174 @@ function writeFrameToPublisher(rgbaBuffer, width, height) {
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 let mainWindow = null;
-let authWindow = null;
-let authCallbackHandled = false;
-let pendingOAuthCallbackUrl = null;
-let oauthRendererReady = false;
+let pendingAppRoute = null;
+
+function parseAppCallbackUrl(value) {
+  if (typeof value !== 'string' || !value.startsWith('henshin://')) return null;
+
+  try {
+    const callbackUrl = new URL(value);
+    if (callbackUrl.protocol !== 'henshin:' || callbackUrl.username || callbackUrl.password) return null;
+
+    if (callbackUrl.hostname === 'auth-callback') {
+      const code = callbackUrl.searchParams.get('code') || '';
+      const error = callbackUrl.searchParams.get('error') || '';
+      const errorDescription = callbackUrl.searchParams.get('error_description') || '';
+      if ((!code && !error) || code.length > 2048 || error.length > 200 || errorDescription.length > 500) {
+        return null;
+      }
+
+      const routeParams = new URLSearchParams();
+      if (code) routeParams.set('code', code);
+      if (error) routeParams.set('error', error);
+      if (errorDescription) routeParams.set('error_description', errorDescription);
+      return `/auth-callback?${routeParams.toString()}`;
+    }
+
+    if (callbackUrl.hostname !== 'payment-success') return null;
+
+    const paymentId = callbackUrl.searchParams.get('ref') || '';
+    const transId = callbackUrl.searchParams.get('transId') || '';
+    const status = callbackUrl.searchParams.get('status') || '';
+    if (!paymentId && !transId) return null;
+
+    const routeParams = new URLSearchParams();
+    if (paymentId) routeParams.set('ref', paymentId);
+    if (transId) routeParams.set('transId', transId);
+    if (status) routeParams.set('status', status);
+    return `/payment-success?${routeParams.toString()}`;
+  } catch {
+    return null;
+  }
+}
+
+function loadRendererRoute(route = null) {
+  if (!mainWindow || mainWindow.isDestroyed()) return;
+
+  if (app.isPackaged) {
+    const options = route ? { hash: route } : undefined;
+    void mainWindow.loadFile(path.join(__dirname, '../dist/index.html'), options);
+    return;
+  }
+
+  const baseUrl = (process.env.HENSHIN_DEV_SERVER_URL || 'http://localhost:5173').replace(/\/+$/, '');
+  void mainWindow.loadURL(route ? `${baseUrl}/#${route}` : baseUrl);
+}
+
+function handleAppCallback(value) {
+  const route = parseAppCallbackUrl(value);
+  if (!route) return false;
+
+  pendingAppRoute = route;
+  if (mainWindow && !mainWindow.isDestroyed()) {
+    loadRendererRoute(route);
+    pendingAppRoute = null;
+    if (mainWindow.isMinimized()) mainWindow.restore();
+    mainWindow.focus();
+  }
+  return true;
+}
+
+function getAllowedPaymentHosts() {
+  const hosts = new Set(['fapshi.com']);
+  try {
+    const configuredUrl = new URL(process.env.FAPSHI_BASE_URL || 'https://sandbox.fapshi.com');
+    if (configuredUrl.protocol === 'https:') hosts.add(configuredUrl.hostname.toLowerCase());
+  } catch {
+    // Invalid optional configuration must not broaden the payment URL allowlist.
+  }
+  return hosts;
+}
+
+function parsePaymentUrl(value) {
+  if (
+    typeof value !== 'string' ||
+    value.length === 0 ||
+    value.length > 2048 ||
+    value !== value.trim()
+  ) {
+    return null;
+  }
+
+  try {
+    const paymentUrl = new URL(value);
+    const hostname = paymentUrl.hostname.toLowerCase();
+    const configuredHosts = getAllowedPaymentHosts();
+    const isFapshiHost =
+      hostname === 'fapshi.com' ||
+      hostname.endsWith('.fapshi.com') ||
+      configuredHosts.has(hostname);
+    if (
+      paymentUrl.protocol !== 'https:' ||
+      paymentUrl.username ||
+      paymentUrl.password ||
+      (paymentUrl.port && paymentUrl.port !== '443') ||
+      !isFapshiHost
+    ) {
+      return null;
+    }
+    return paymentUrl;
+  } catch {
+    return null;
+  }
+}
+
+function parseAuthUrl(value) {
+  if (typeof value !== 'string' || value.length === 0 || value.length > 2048) return null;
+
+  try {
+    const authUrl = new URL(value);
+    const hostname = authUrl.hostname.toLowerCase();
+    if (
+      authUrl.protocol !== 'https:' ||
+      authUrl.username ||
+      authUrl.password ||
+      (authUrl.port && authUrl.port !== '443') ||
+      !/^[a-z0-9-]+\.supabase\.co$/.test(hostname) ||
+      authUrl.pathname !== '/auth/v1/authorize' ||
+      authUrl.searchParams.get('provider') !== 'google'
+    ) {
+      return null;
+    }
+    return authUrl;
+  } catch {
+    return null;
+  }
+}
+
+async function openPaymentLink(value) {
+  const paymentUrl = parsePaymentUrl(value);
+  if (!paymentUrl) throw new Error('Invalid Fapshi payment URL.');
+  await shell.openExternal(paymentUrl.href);
+  return { opened: true };
+}
+
+async function openAuthLink(value) {
+  const authUrl = parseAuthUrl(value);
+  if (!authUrl) throw new Error('Invalid Google authentication URL.');
+  await shell.openExternal(authUrl.href);
+  return { opened: true };
+}
 
 // Keep the WebRTC encoder on the safer software path. The receive/decode side
 // still benefits from normal Chromium GPU acceleration in Electron.
 app.commandLine.appendSwitch('disable-webrtc-hw-encoding');
 
-// Register custom protocol for OAuth deep links (must be before app.ready)
-app.setAsDefaultProtocolClient('formatboy');
+if (process.defaultApp && process.argv[1]) {
+  app.setAsDefaultProtocolClient('henshin', process.execPath, [path.resolve(process.argv[1])]);
+} else {
+  app.setAsDefaultProtocolClient('henshin');
+}
 
-// Enforce single instance so deep link callbacks work on Windows
+// Enforce single instance so authentication and payment callbacks focus the existing window.
 const gotTheLock = app.requestSingleInstanceLock();
-
-function isOAuthCallbackUrl(url) {
-  if (!url) return false;
-
-  try {
-    const parsed = new URL(url);
-    if (parsed.protocol === 'formatboy:') {
-      return true;
-    }
-
-    if (parsed.protocol === 'http:' || parsed.protocol === 'https:') {
-      return ['localhost', '127.0.0.1', '::1'].includes(parsed.hostname);
-    }
-
-    return false;
-  } catch {
-    return url.startsWith('formatboy://');
-  }
-}
-
-function closeAuthWindow() {
-  if (authWindow && !authWindow.isDestroyed()) {
-    authWindow.destroy();
-  }
-  authWindow = null;
-}
-
-function flushPendingOAuthCallback() {
-  if (!pendingOAuthCallbackUrl || !oauthRendererReady || !mainWindow || mainWindow.isDestroyed()) return;
-  if (mainWindow.webContents.isLoadingMainFrame()) return;
-
-  const callbackUrl = pendingOAuthCallbackUrl;
-  pendingOAuthCallbackUrl = null;
-  mainWindow.webContents.send('oauth-callback', callbackUrl);
-  if (mainWindow.isMinimized()) mainWindow.restore();
-  mainWindow.focus();
-}
-
-function handleOAuthCallback(url) {
-  if (!isOAuthCallbackUrl(url)) return;
-  if (authCallbackHandled && pendingOAuthCallbackUrl === url) return;
-
-  authCallbackHandled = true;
-  pendingOAuthCallbackUrl = url;
-  closeAuthWindow();
-  flushPendingOAuthCallback();
-}
-
-function createAuthWindow(url) {
-  if (!url) return;
-
-  authCallbackHandled = false;
-  closeAuthWindow();
-
-  authWindow = new BrowserWindow({
-    parent: mainWindow || undefined,
-    modal: Boolean(mainWindow),
-    width: 520,
-    height: 720,
-    autoHideMenuBar: true,
-    backgroundColor: '#111111',
-    title: 'Continue with Google',
-    webPreferences: {
-      nodeIntegration: false,
-      contextIsolation: true,
-      sandbox: true,
-      nativeWindowOpen: false,
-    },
-  });
-
-  authWindow.removeMenu();
-
-  const handleNavigation = (event, nextUrl) => {
-    if (!isOAuthCallbackUrl(nextUrl)) {
-      return;
-    }
-
-    event.preventDefault();
-    handleOAuthCallback(nextUrl);
-  };
-
-  authWindow.webContents.on('will-navigate', handleNavigation);
-  authWindow.webContents.on('will-redirect', handleNavigation);
-  authWindow.webContents.setWindowOpenHandler(({ url: nextUrl }) => {
-    if (isOAuthCallbackUrl(nextUrl)) {
-      handleOAuthCallback(nextUrl);
-      return { action: 'deny' };
-    }
-
-    shell.openExternal(nextUrl);
-    return { action: 'deny' };
-  });
-
-  authWindow.on('closed', () => {
-    authWindow = null;
-  });
-
-  authWindow.loadURL(url);
-}
 
 if (!gotTheLock) {
   app.quit();
 } else {
-  // On Windows, deep link comes in as a second-instance commandLine arg
   app.on('second-instance', (_event, commandLine) => {
-    const deepLink = commandLine.find(arg => arg.startsWith('formatboy://'));
-    if (deepLink) handleOAuthCallback(deepLink);
+    const callbackUrl = commandLine.find((argument) => argument.startsWith('henshin://'));
+    if (callbackUrl) handleAppCallback(callbackUrl);
     if (mainWindow) {
       if (mainWindow.isMinimized()) mainWindow.restore();
       mainWindow.focus();
@@ -345,7 +417,6 @@ function createWindow() {
     }
   });
 
-  oauthRendererReady = false;
   mainWindow.removeMenu();
 
   const rendererSession = mainWindow.webContents.session;
@@ -374,7 +445,7 @@ function createWindow() {
         overrideBrowserWindowOptions: {
           width: 1280,
           height: 720,
-          title: 'CALL ME preview',
+          title: 'Henshin 変身 preview',
           autoHideMenuBar: true,
           backgroundColor: '#000000',
           webPreferences: {
@@ -387,15 +458,27 @@ function createWindow() {
       };
     }
 
+    if (parsePaymentUrl(url)) {
+      void openPaymentLink(url).catch((error) => {
+        console.error('[payment] Could not open external checkout:', error);
+      });
+      return { action: 'deny' };
+    }
+
     return { action: 'allow' };
   });
 
-  if (app.isPackaged) {
-    // Ensure routing works for nested paths if hash router isn't used
-    mainWindow.loadFile(path.join(__dirname, '../dist/index.html'));
-  } else {
-    mainWindow.loadURL('http://localhost:5173');
-  }
+  mainWindow.webContents.on('will-navigate', (event, url) => {
+    if (!parsePaymentUrl(url)) return;
+    event.preventDefault();
+    void openPaymentLink(url).catch((error) => {
+      console.error('[payment] Could not open external checkout:', error);
+    });
+  });
+
+  const initialRoute = pendingAppRoute;
+  pendingAppRoute = null;
+  loadRendererRoute(initialRoute);
 
   mainWindow.on('closed', () => {
     mainWindow = null;
@@ -426,24 +509,6 @@ ipcMain.on('window-close', () => {
   }
 });
 
-// Open a URL in the system default browser (used for Google OAuth)
-ipcMain.on('open-external', (_event, url) => {
-  shell.openExternal(url);
-});
-
-// Google blocks OAuth in embedded user agents, so use the system browser.
-ipcMain.on('open-auth-popup', (_event, url) => {
-  if (!url) return;
-  shell.openExternal(url).catch((error) => {
-    console.error('[oauth] Failed to open the system browser:', error);
-  });
-});
-
-ipcMain.on('oauth-callback-ready', () => {
-  oauthRendererReady = true;
-  flushPendingOAuthCallback();
-});
-
 // Toggle window ghost mode (exclude from screen capture)
 ipcMain.on('toggle-capture-protection', (_event, { isProtected }) => {
   if (mainWindow && !mainWindow.isDestroyed()) {
@@ -460,10 +525,18 @@ ipcMain.on('renderer-log', (_event, { level = 'log', message, data }) => {
   }
 });
 
-// macOS: deep link comes via open-url event
-app.on('open-url', (event, url) => {
-  event.preventDefault();
-  handleOAuthCallback(url);
+ipcMain.handle('open-payment-link', (event, url) => {
+  if (!mainWindow || event.sender.id !== mainWindow.webContents.id) {
+    throw new Error('Payment links can only be opened by the main window.');
+  }
+  return openPaymentLink(url);
+});
+
+ipcMain.handle('open-auth-link', (event, url) => {
+  if (!mainWindow || event.sender.id !== mainWindow.webContents.id) {
+    throw new Error('Authentication links can only be opened by the main window.');
+  }
+  return openAuthLink(url);
 });
 
 // ---------------------------------------------------------------------------
@@ -494,6 +567,11 @@ registerUpdaterIpc();
 app.isQuitting = false;
 app.on('before-quit', () => { app.isQuitting = true; stopVCamPublisher(); });
 
+app.on('open-url', (event, url) => {
+  event.preventDefault();
+  handleAppCallback(url);
+});
+
 app.whenReady().then(async () => {
   // Request camera access inherently for WebRTC dependencies
   if (process.platform === 'darwin') {
@@ -506,11 +584,8 @@ app.whenReady().then(async () => {
     startVCamPublisher();
   }
 
-  const initialDeepLink = process.argv.find((arg) => arg.startsWith('formatboy://'));
-  if (initialDeepLink) {
-    authCallbackHandled = true;
-    pendingOAuthCallbackUrl = initialDeepLink;
-  }
+  const initialAppCallback = process.argv.find((argument) => argument.startsWith('henshin://'));
+  if (initialAppCallback) handleAppCallback(initialAppCallback);
 
   createWindow();
   scheduleBackgroundUpdateCheck();

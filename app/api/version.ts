@@ -2,14 +2,14 @@
 import path from 'path';
 import { supabaseAdmin, supabaseAdminConfigError } from './supabase.js';
 
-const FALLBACK_VERSION = '2.0.20';
+const FALLBACK_VERSION = '2.0.28';
 const FALLBACK_DOWNLOAD_URL = '';
 const FALLBACK_ARTIFACT_TYPE = 'installer';
 const DEFAULT_SIGNED_URL_EXPIRES = 60 * 60 * 2;
-const DEFAULT_GITHUB_OWNER = 'samuellucky2424-afk';
-const DEFAULT_GITHUB_REPO = 'Format-Boy.Cam';
-const DEFAULT_GITHUB_EXE_PATTERN = '^CALL[ .]ME[ .]Setup[ .].*\\.exe$';
-const GITHUB_NORMALIZED_EXE_PATTERN = /^CALL[ .]ME[ .]Setup[ .].*\.exe$/i;
+const DEFAULT_GITHUB_OWNER = 'pius-coder';
+const DEFAULT_GITHUB_REPO = 'ghostSwap237';
+const DEFAULT_GITHUB_EXE_PATTERN = '^Henshin-Setup-\\d+\\.\\d+\\.\\d+\\.exe$';
+const GITHUB_NORMALIZED_EXE_PATTERN = /^Henshin-Setup-\d+\.\d+\.\d+\.exe$/i;
 
 function trimSlashes(value = '') {
   return String(value).replace(/^\/+|\/+$/g, '').trim();
@@ -32,7 +32,14 @@ function resolveStoragePath(template, version) {
 
 async function fetchGitHubRelease(owner, repo, exePattern) {
   try {
-    const response = await fetch(`https://api.github.com/repos/${owner}/${repo}/releases/latest`);
+    const githubToken = String(process.env.GITHUB_TOKEN || '').trim();
+    const response = await fetch(`https://api.github.com/repos/${owner}/${repo}/releases/latest`, {
+      headers: {
+        Accept: 'application/vnd.github+json',
+        'User-Agent': 'henshin-version-api',
+        ...(githubToken ? { Authorization: `Bearer ${githubToken}` } : {}),
+      },
+    });
     if (!response.ok) return null;
 
     const release = await response.json();
@@ -77,7 +84,14 @@ export default async function handler(req, res) {
   const githubExePattern = String(process.env.DESKTOP_GITHUB_EXE_PATTERN || DEFAULT_GITHUB_EXE_PATTERN).trim();
   
   if (githubOwner && githubRepo) {
-    const gitHubRelease = await fetchGitHubRelease(githubOwner, githubRepo, new RegExp(githubExePattern, 'i'));
+    let compiledExePattern;
+    try {
+      compiledExePattern = new RegExp(githubExePattern, 'i');
+    } catch {
+      return res.status(500).json({ error: 'DESKTOP_GITHUB_EXE_PATTERN is not a valid regular expression' });
+    }
+
+    const gitHubRelease = await fetchGitHubRelease(githubOwner, githubRepo, compiledExePattern);
     if (gitHubRelease) {
       return res.status(200).json({
         version: gitHubRelease.version,

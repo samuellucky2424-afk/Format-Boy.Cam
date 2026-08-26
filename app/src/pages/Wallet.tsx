@@ -1,205 +1,107 @@
-import { useState, useEffect } from 'react';
-import { ArrowDownLeft, ArrowUpRight, Plus, ExternalLink, LogOut } from 'lucide-react';
+import { ArrowDownLeft, ArrowUpRight, Plus, LogOut } from 'lucide-react';
+import { AnimatedNumber } from '@/components/ui/animated-number';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
+import { CosmicButton } from '@/components/ui/cosmic-button';
 import { Separator } from '@/components/ui/separator';
-import { Button } from '@/components/ui/button';
+import { TextureButton } from '@/components/ui/texture-button';
 import { useApp } from '@/context/AppContext';
 import { useAuth } from '@/context/AuthContext';
-import { toast } from 'sonner';
-import { CryptoPaymentModal } from '@/components/CryptoPaymentModal';
-import { supabase } from '@/lib/supabase';
-
-interface CreditPlan {
-  id: string;
-  credits: number;
-  priceNGN: number;
-  priceUSD: number;
-}
+import { usePricingDialog } from '@/hooks/usePricingDialog';
+import { useProAccess } from '@/hooks/useProAccess';
 
 const CREDITS_PER_SECOND = 2;
 
 function Wallet() {
   const { credits, transactions } = useApp();
   const { user, logout } = useAuth();
-  const [plans, setPlans] = useState<CreditPlan[]>([]);
-  const [loadingPlans, setLoadingPlans] = useState(true);
-  const [selectedPlan, setSelectedPlan] = useState<CreditPlan | null>(null);
-  const [isPaymentModalOpen, setIsPaymentModalOpen] = useState(false);
-  const [showFundModal, setShowFundModal] = useState(false);
-
-  useEffect(() => {
-    async function loadPlans() {
-      try {
-        const { data, error } = await supabase
-          .from('credit_packages')
-          .select('id, credits, price_ngn, price_usd')
-          .eq('is_active', true)
-          .order('sort_order', { ascending: true })
-          .order('credits', { ascending: true });
-
-        if (error) throw error;
-        if (data) {
-          setPlans(data.map(p => ({ 
-            id: p.id,
-            credits: p.credits, 
-            priceNGN: Number(p.price_ngn),
-            priceUSD: Number(p.price_usd || 0)
-          })));
-        }
-      } catch (err) {
-        console.error('Failed to load plans:', err);
-        toast.error('Failed to load credit packages.');
-      } finally {
-        setLoadingPlans(false);
-      }
-    }
-    loadPlans();
-  }, []);
+  const { openPricing } = usePricingDialog();
+  const { access: proAccess } = useProAccess(user?.id);
 
   const remainingSeconds = Math.floor(credits / CREDITS_PER_SECOND);
-
-  const handleFundWallet = () => {
-    if (!user) {
-      toast.error('Please log in to buy credits.');
-      return;
-    }
-
-    if (!selectedPlan) {
-      toast.error('Please select a credit package.');
-      return;
-    }
-
-    setIsPaymentModalOpen(true);
-  };
+  const proRemainingSeconds = proAccess.active && proAccess.creditsPerSecond
+    ? Math.floor(credits / proAccess.creditsPerSecond)
+    : null;
 
   return (
     <div className="max-w-[800px]">
       <div className="mb-8 flex items-start justify-between">
         <div>
-          <h1 className="text-3xl font-bold text-white mb-2 tracking-tight">Credits</h1>
-          <p className="text-sm text-[#a1a1aa]">Manage your credits, estimate stream time, and review transactions</p>
+          <h1 className="mb-2 text-3xl font-bold tracking-tight text-foreground">Credits</h1>
+          <p className="text-sm text-muted-foreground">Manage your credits, estimate stream time, and review transactions</p>
         </div>
-        <Button
+        <TextureButton
           onClick={logout}
-          variant="ghost"
-          className="flex items-center gap-2 text-[#71717a] hover:text-red-400 hover:bg-red-500/10 border border-transparent hover:border-red-500/20 rounded-xl transition-all px-4 h-10"
+          variant="destructive"
         >
           <LogOut className="w-4 h-4" />
           <span className="text-sm font-medium">Logout</span>
-        </Button>
+        </TextureButton>
       </div>
 
-      <Card className="bg-gradient-to-br from-[#131316] to-[#0f0f10] border-[#1f1f23] overflow-hidden rounded-2xl shadow-2xl shadow-black/20 mb-6">
-        <CardHeader className="pb-4 border-b border-[#1f1f23]">
-          <CardTitle className="text-sm font-medium text-[#71717a]">Available Credits</CardTitle>
+      <Card className="mb-6">
+        <CardHeader className="pb-4">
+          <CardTitle className="text-sm font-medium text-muted-foreground">Available Credits</CardTitle>
         </CardHeader>
         <CardContent className="p-6">
-          <p className="text-4xl font-semibold text-white mb-6 animate-pulse">
-            {Math.round(credits).toLocaleString()} <span className="text-xl text-[#71717a]">Credits</span>
+          <p className="mb-6 text-4xl font-semibold text-foreground">
+            <AnimatedNumber value={Math.round(credits)} /> <span className="text-xl text-muted-foreground">Credits</span>
           </p>
-          <p className="text-sm text-[#71717a] mb-6">
-            Estimated remaining stream time: {Math.floor(remainingSeconds / 60)}m {remainingSeconds % 60}s
-          </p>
-          <Button
-            onClick={() => setShowFundModal(!showFundModal)}
-            className="h-11 px-6 bg-blue-600 hover:bg-blue-500 text-white font-semibold rounded-xl shadow-lg shadow-blue-500/20 transition-all hover:scale-[1.02]"
+          <div className="mb-6 space-y-1 text-sm text-muted-foreground">
+            <p>Fast at 2 cr/s: {Math.floor(remainingSeconds / 60)}m {remainingSeconds % 60}s remaining</p>
+            {proRemainingSeconds !== null && (
+              <p>
+                PRO at {proAccess.creditsPerSecond} cr/s: {Math.floor(proRemainingSeconds / 60)}m {proRemainingSeconds % 60}s remaining
+              </p>
+            )}
+          </div>
+          <CosmicButton
+            as="button"
+            onClick={openPricing}
             id="fund-wallet-btn"
           >
             <Plus className="w-4 h-4 mr-2" />
             Buy Credits
-          </Button>
+          </CosmicButton>
         </CardContent>
       </Card>
 
-      {showFundModal && (
-        <Card className="bg-gradient-to-br from-[#131316] to-[#0f0f10] border-[#1f1f23] overflow-hidden rounded-2xl shadow-2xl shadow-black/20 mb-6 animate-in slide-in-from-top-2 duration-200">
-          <CardHeader className="pb-4 border-b border-[#1f1f23]">
-            <CardTitle className="text-sm font-medium text-[#71717a]">Buy Credits</CardTitle>
-          </CardHeader>
-          <CardContent className="p-6">
-            <label className="block text-xs font-medium text-[#a1a1aa] mb-3">Select Package</label>
-            {loadingPlans ? (
-              <div className="text-center py-4 text-[#71717a]">Loading packages...</div>
-            ) : (
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 mb-6">
-                {plans.map((plan) => (
-                  <button
-                    key={plan.credits}
-                    onClick={() => setSelectedPlan(plan)}
-                    className={`p-4 rounded-xl border text-left transition-all duration-150 ${
-                      selectedPlan?.credits === plan.credits
-                        ? 'bg-blue-600/15 border-blue-500 ring-2 ring-blue-500/40 shadow-lg shadow-blue-500/10'
-                        : 'bg-[#1a1a1f] border-[#27272a] text-white hover:border-[#3f3f46] hover:bg-[#222]'
-                    }`}
-                  >
-                    <div className="flex flex-col">
-                      <span className={`text-lg font-bold ${selectedPlan?.credits === plan.credits ? 'text-blue-400' : 'text-white'}`}>
-                        {plan.credits.toLocaleString()} Credits
-                      </span>
-                      <span className="text-sm text-[#a1a1aa] mt-1">
-                        ${plan.priceUSD > 0 ? plan.priceUSD.toLocaleString() : plan.priceNGN.toLocaleString()} 
-                        {plan.priceUSD === 0 && ' NGN'}
-                      </span>
-                    </div>
-                  </button>
-                ))}
-              </div>
-            )}
-
-            <Button
-              onClick={handleFundWallet}
-              disabled={!selectedPlan}
-              className="w-full h-12 bg-gradient-to-r from-blue-600 to-blue-500 hover:from-blue-500 hover:to-blue-400 text-white font-bold rounded-xl shadow-lg shadow-blue-500/30 transition-all hover:scale-[1.01] disabled:opacity-50 disabled:hover:scale-100"
-              id="proceed-payment-btn"
-            >
-              <ExternalLink className="w-4 h-4 mr-2" />
-              Pay {selectedPlan ? (selectedPlan.priceUSD ? `$${selectedPlan.priceUSD.toLocaleString()}` : `NGN ${selectedPlan.priceNGN.toLocaleString()}`) : 'Now'}
-            </Button>
-
-            <p className="text-xs text-[#52525b] text-center mt-3">
-              Choose from the active payment methods configured by the administrator
-            </p>
-          </CardContent>
-        </Card>
-      )}
-
-      <Card className="bg-gradient-to-br from-[#131316] to-[#0f0f10] border-[#1f1f23] overflow-hidden rounded-2xl shadow-2xl shadow-black/20">
-        <CardHeader className="pb-4 border-b border-[#1f1f23]">
-          <CardTitle className="text-sm font-medium text-[#71717a]">Transaction History</CardTitle>
+      <Card>
+        <CardHeader className="pb-4">
+          <CardTitle className="text-sm font-medium text-muted-foreground">Transaction History</CardTitle>
         </CardHeader>
         <CardContent>
           {transactions.length === 0 ? (
-            <div className="text-center py-8 text-[#71717a]">No transactions found.</div>
+            <div className="py-8 text-center text-muted-foreground">No transactions found.</div>
           ) : (
             <div className="space-y-4 pt-4">
               {transactions.map((tx, index) => (
                 <div key={tx.id}>
                   <div className="flex items-center justify-between py-3">
                     <div className="flex items-center gap-3">
-                      <div className={`w-10 h-10 rounded-full flex items-center justify-center ${tx.type === 'credit' ? 'bg-emerald-500/10' : 'bg-red-500/10'}`}>
+                      <div className={`flex size-10 items-center justify-center rounded-full ${tx.type === 'credit' ? 'bg-primary/10' : 'bg-destructive/10'}`}>
                         {tx.type === 'credit' ? (
-                          <ArrowDownLeft className="w-5 h-5 text-emerald-500" />
+                          <ArrowDownLeft className="size-5 text-primary" />
                         ) : (
-                          <ArrowUpRight className="w-5 h-5 text-red-500" />
+                          <ArrowUpRight className="size-5 text-destructive" />
                         )}
                       </div>
                       <div>
-                        <p className="text-sm font-medium text-white">
+                        <p className="text-sm font-medium text-foreground">
                           {tx.description || (tx.type === 'credit' ? 'Credits purchased' : 'Stream usage')}
                         </p>
-                        <p className="text-xs text-[#71717a]">{new Date(tx.timestamp).toLocaleString()}</p>
+                        <p className="text-xs text-muted-foreground">{new Date(tx.timestamp).toLocaleString()}</p>
                       </div>
                     </div>
                     <div className="text-right">
-                      <p className={`text-sm font-semibold ${tx.type === 'credit' ? 'text-emerald-500' : 'text-red-500'}`}>
+                      <p className={`text-sm font-semibold ${tx.type === 'credit' ? 'text-primary' : 'text-destructive'}`}>
                         {typeof tx.credits === 'number' && Number.isFinite(tx.credits)
                           ? `${tx.type === 'debit' ? '-' : '+'}${tx.credits.toLocaleString()} Credits`
                           : 'Credits unavailable'}
                       </p>
-                      <p className="text-xs text-[#71717a]">Completed</p>
+                      <p className="text-xs text-muted-foreground">Completed</p>
                     </div>
                   </div>
-                  {index < transactions.length - 1 && <Separator className="bg-[#27272a]" />}
+                  {index < transactions.length - 1 && <Separator className="bg-blue-500/10" />}
                 </div>
               ))}
             </div>
@@ -207,14 +109,6 @@ function Wallet() {
         </CardContent>
       </Card>
 
-      <CryptoPaymentModal
-        isOpen={isPaymentModalOpen}
-        onClose={() => {
-          setIsPaymentModalOpen(false);
-          setShowFundModal(false);
-        }}
-        plan={selectedPlan}
-      />
     </div>
   );
 }

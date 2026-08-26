@@ -1,10 +1,12 @@
 import { useEffect, useRef, useState } from 'react';
 import { CheckCircle2, Download, Loader2, RefreshCw, Rocket } from 'lucide-react';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
+import { CosmicButton } from '@/components/ui/cosmic-button';
 import { Input } from '@/components/ui/input';
-import { Button } from '@/components/ui/button';
 import { Separator } from '@/components/ui/separator';
 import { Switch } from '@/components/ui/switch';
+import { TextureButton } from '@/components/ui/texture-button';
+import { TextureCard } from '@/components/ui/texture-card';
 import { Label } from '@/components/ui/label';
 import { useAuth } from '@/context/AuthContext';
 import { CURRENT_VERSION } from '@/lib/app-version';
@@ -139,14 +141,14 @@ function Settings() {
     <div className="max-w-3xl">
       <div className="mb-8">
         <h1 className="text-3xl font-bold text-white mb-2 tracking-tight">Settings</h1>
-        <p className="text-sm text-[#a1a1aa]">Manage your account settings and preferences</p>
+        <p className="text-sm text-muted-foreground">Manage your account settings and preferences</p>
       </div>
 
       <div className="space-y-6">
-        <Card className="bg-gradient-to-br from-[#131316] to-[#0f0f10] border-[#1f1f23] overflow-hidden rounded-2xl shadow-2xl shadow-black/20">
-          <CardHeader className="border-b border-[#1f1f23]">
+        <Card>
+          <CardHeader>
             <CardTitle className="text-lg font-semibold text-white tracking-tight">Desktop Updates</CardTitle>
-            <CardDescription className="text-xs text-[#71717a]">Keep CALL ME current without re-downloading the installer manually</CardDescription>
+            <CardDescription className="text-xs">Keep Henshin 変身 current without re-downloading the installer manually</CardDescription>
           </CardHeader>
           <CardContent className="p-6 space-y-5">
             <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
@@ -157,17 +159,18 @@ function Settings() {
                   ) : updateState.status === 'installing' ? (
                     <Rocket className="w-4 h-4 text-blue-400" />
                   ) : (
-                    <RefreshCw className={`w-4 h-4 ${isUpdaterBusy ? 'text-blue-400 animate-spin' : 'text-[#71717a]'}`} />
+                    <RefreshCw className={`w-4 h-4 ${isUpdaterBusy ? 'text-blue-400 animate-spin' : 'text-muted-foreground'}`} />
                   )}
                   <p className="text-sm font-medium text-white">Update Status</p>
                 </div>
-                <p className="text-sm text-[#d4d4d8]">{updateState.message}</p>
-                <p className="text-xs text-[#71717a]">Last checked: {checkedAtLabel}</p>
+                <p className="text-sm text-foreground/90">{updateState.message}</p>
+                <p className="text-xs text-muted-foreground">Last checked: {checkedAtLabel}</p>
               </div>
-              <Button
+              <TextureButton
+                variant="accent"
                 onClick={handleCheckForUpdates}
                 disabled={!updateState.isElectron || isUpdaterBusy}
-                className="sm:min-w-[190px] bg-blue-600 hover:bg-blue-500 text-white font-medium"
+                className="sm:min-w-[190px]"
               >
                 {isUpdaterBusy ? (
                   <Loader2 className="w-4 h-4 mr-2 animate-spin" />
@@ -177,33 +180,33 @@ function Settings() {
                   <Download className="w-4 h-4 mr-2" />
                 )}
                 {getUpdateButtonLabel(updateState.status)}
-              </Button>
+              </TextureButton>
             </div>
 
             <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
-              <div className="rounded-xl border border-[#27272a] bg-[#18181b] p-4">
-                <p className="text-xs uppercase tracking-[0.16em] text-[#71717a] mb-2">Current Version</p>
+              <TextureCard contentClassName="p-4">
+                <p className="mb-2 text-xs uppercase tracking-[0.16em] text-muted-foreground">Current Version</p>
                 <p className="text-lg font-semibold text-white">{updateState.currentVersion}</p>
-              </div>
-              <div className="rounded-xl border border-[#27272a] bg-[#18181b] p-4">
-                <p className="text-xs uppercase tracking-[0.16em] text-[#71717a] mb-2">Latest Version</p>
+              </TextureCard>
+              <TextureCard contentClassName="p-4">
+                <p className="mb-2 text-xs uppercase tracking-[0.16em] text-muted-foreground">Latest Version</p>
                 <p className="text-lg font-semibold text-white">{updateState.latestVersion || 'Unknown'}</p>
-              </div>
-              <div className="rounded-xl border border-[#27272a] bg-[#18181b] p-4">
-                <p className="text-xs uppercase tracking-[0.16em] text-[#71717a] mb-2">Install Mode</p>
+              </TextureCard>
+              <TextureCard contentClassName="p-4">
+                <p className="mb-2 text-xs uppercase tracking-[0.16em] text-muted-foreground">Install Mode</p>
                 <p className="text-lg font-semibold text-white">
                   {updateState.canAutoInstall ? 'Automatic' : updateState.isElectron ? 'Download Only' : 'Browser'}
                 </p>
-              </div>
+              </TextureCard>
             </div>
 
             {(updateState.status === 'downloading' || updateState.status === 'installing' || updateState.status === 'downloaded') && (
               <div className="space-y-2">
-                <div className="flex items-center justify-between text-xs text-[#71717a]">
+                <div className="flex items-center justify-between text-xs text-muted-foreground">
                   <span>Update progress</span>
                   <span>{Math.max(0, Math.min(100, updateState.progress))}%</span>
                 </div>
-                <div className="h-2 rounded-full bg-[#18181b] border border-[#27272a] overflow-hidden">
+                <div className="h-2 overflow-hidden rounded-full border border-border/70 bg-background/70">
                   <div
                     className="h-full rounded-full bg-gradient-to-r from-blue-600 to-blue-400 transition-all duration-300"
                     style={{ width: `${Math.max(4, Math.min(100, updateState.progress || 0))}%` }}
@@ -213,26 +216,26 @@ function Settings() {
             )}
 
             {updateState.downloadedFileName && (
-              <p className="text-xs text-[#71717a]">
-                Downloaded package: <span className="text-[#d4d4d8]">{updateState.downloadedFileName}</span>
+              <p className="text-xs text-muted-foreground">
+                Downloaded package: <span className="text-foreground/90">{updateState.downloadedFileName}</span>
               </p>
             )}
 
             {releaseNotes && (
-              <div className="rounded-xl border border-[#27272a] bg-[#18181b] p-4">
-                <p className="text-xs uppercase tracking-[0.16em] text-[#71717a] mb-2">Release Notes</p>
-                <p className="text-sm text-[#d4d4d8] whitespace-pre-wrap">{releaseNotes}</p>
-              </div>
+              <TextureCard contentClassName="p-4">
+                <p className="mb-2 text-xs uppercase tracking-[0.16em] text-muted-foreground">Release Notes</p>
+                <p className="whitespace-pre-wrap text-sm text-foreground/90">{releaseNotes}</p>
+              </TextureCard>
             )}
 
             {!updateState.isElectron && (
-              <p className="text-xs text-[#71717a]">
+              <p className="text-xs text-muted-foreground">
                 Open the Electron desktop app to check for updates, download new builds, and restart automatically.
               </p>
             )}
 
             {updateState.isElectron && !updateState.isPackaged && (
-              <p className="text-xs text-[#71717a]">
+              <p className="text-xs text-muted-foreground">
                 You&apos;re running the desktop app in development mode. Update checks work here, but automatic install is only enabled in packaged Windows builds.
               </p>
             )}
@@ -240,93 +243,92 @@ function Settings() {
           </CardContent>
         </Card>
 
-        <Card className="bg-gradient-to-br from-[#131316] to-[#0f0f10] border-[#1f1f23] overflow-hidden rounded-2xl shadow-2xl shadow-black/20">
-          <CardHeader className="border-b border-[#1f1f23]">
+        <Card>
+          <CardHeader>
             <CardTitle className="text-lg font-semibold text-white tracking-tight">Profile Information</CardTitle>
-            <CardDescription className="text-xs text-[#71717a]">Update your account details</CardDescription>
+            <CardDescription className="text-xs">Update your account details</CardDescription>
           </CardHeader>
           <CardContent className="p-6 space-y-4">
             <div className="grid grid-cols-2 gap-4">
               <div className="space-y-2">
-                <Label htmlFor="name" className="text-sm font-medium text-[#a1a1aa]">Full Name</Label>
+                <Label htmlFor="name" className="text-sm font-medium text-muted-foreground">Full Name</Label>
                 <Input
                   id="name"
                   value={name}
                   onChange={(e) => setName(e.target.value)}
-                  className="h-11 bg-[#18181b] border-[#27272a] text-white focus:border-blue-500/50 focus:ring-2 focus:ring-blue-500/20"
+                  className="h-11 bg-background/70"
                 />
               </div>
               <div className="space-y-2">
-                <Label htmlFor="email" className="text-sm font-medium text-[#a1a1aa]">Email Address</Label>
+                <Label htmlFor="email" className="text-sm font-medium text-muted-foreground">Email Address</Label>
                 <Input
                   id="email"
                   type="email"
                   value={email}
                   onChange={(e) => setEmail(e.target.value)}
-                  className="h-11 bg-[#18181b] border-[#27272a] text-white focus:border-blue-500/50 focus:ring-2 focus:ring-blue-500/20"
+                  className="h-11 bg-background/70"
                 />
               </div>
             </div>
-            <Button 
+            <CosmicButton
+              as="button"
               onClick={handleSaveProfile}
               disabled={isSaving}
-              className="bg-blue-600 hover:bg-blue-500 text-white font-medium"
             >
               {isSaving ? 'Saving...' : 'Save Changes'}
-            </Button>
+            </CosmicButton>
           </CardContent>
         </Card>
 
-        <Card className="bg-gradient-to-br from-[#131316] to-[#0f0f10] border-[#1f1f23] overflow-hidden rounded-2xl shadow-2xl shadow-black/20">
-          <CardHeader className="border-b border-[#1f1f23]">
+        <Card>
+          <CardHeader>
             <CardTitle className="text-lg font-semibold text-white tracking-tight">Notifications</CardTitle>
-            <CardDescription className="text-xs text-[#71717a]">Configure your notification preferences</CardDescription>
+            <CardDescription className="text-xs">Configure your notification preferences</CardDescription>
           </CardHeader>
           <CardContent className="p-6 space-y-4">
             <div className="flex items-center justify-between">
               <div className="space-y-0.5">
                 <Label className="text-sm font-medium text-white">Email Notifications</Label>
-                <p className="text-xs text-[#71717a]">Receive email updates about your account</p>
+                <p className="text-xs text-muted-foreground">Receive email updates about your account</p>
               </div>
               <Switch defaultChecked />
             </div>
-            <Separator className="bg-[#27272a]" />
+            <Separator className="bg-border/70" />
             <div className="flex items-center justify-between">
               <div className="space-y-0.5">
                 <Label className="text-sm font-medium text-white">Low Credit Alerts</Label>
-                <p className="text-xs text-[#71717a]">Get notified when your credits are low</p>
+                <p className="text-xs text-muted-foreground">Get notified when your credits are low</p>
               </div>
               <Switch defaultChecked />
             </div>
-            <Separator className="bg-[#27272a]" />
+            <Separator className="bg-border/70" />
             <div className="flex items-center justify-between">
               <div className="space-y-0.5">
                 <Label className="text-sm font-medium text-white">Marketing Emails</Label>
-                <p className="text-xs text-[#71717a]">Receive updates about new features and offers</p>
+                <p className="text-xs text-muted-foreground">Receive updates about new features and offers</p>
               </div>
               <Switch />
             </div>
           </CardContent>
         </Card>
 
-        <Card className="bg-gradient-to-br from-[#131316] to-[#0f0f10] border-[#1f1f23] overflow-hidden rounded-2xl shadow-2xl shadow-black/20">
-          <CardHeader className="border-b border-[#1f1f23]">
+        <Card>
+          <CardHeader>
             <CardTitle className="text-lg font-semibold text-white tracking-tight">Danger Zone</CardTitle>
-            <CardDescription className="text-xs text-[#71717a]">Irreversible actions</CardDescription>
+            <CardDescription className="text-xs">Irreversible actions</CardDescription>
           </CardHeader>
           <CardContent className="p-6 space-y-4">
             <div className="flex items-center justify-between">
               <div className="space-y-0.5">
                 <Label className="text-sm font-medium text-white">Sign Out</Label>
-                <p className="text-xs text-[#71717a]">Sign out of your account on this device</p>
+                <p className="text-xs text-muted-foreground">Sign out of your account on this device</p>
               </div>
-              <Button 
+              <TextureButton
                 onClick={logout}
-                variant="outline"
-                className="border-[#27272a] text-[#a1a1aa] hover:text-white hover:bg-[#27272a]"
+                variant="destructive"
               >
                 Sign Out
-              </Button>
+              </TextureButton>
             </div>
           </CardContent>
         </Card>

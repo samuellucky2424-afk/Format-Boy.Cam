@@ -1,4 +1,4 @@
-// DllMain and COM exports for FormatBoyVirtualCameraMF.dll
+// DllMain and COM exports for HenshinVirtualCameraMF.dll
 #define WIN32_LEAN_AND_MEAN
 #define NOMINMAX
 #define INITGUID   // must be defined ONCE per DLL before windows.h
@@ -7,7 +7,7 @@
 #include <mfidl.h>
 #include <shlwapi.h>
 #include <olectl.h>
-#include "../formatboy_ids.h"
+#include "../henshin_ids.h"
 #include "mf_virtual_camera_source.h"
 
 // Declared in mf_virtual_camera_source.cpp
@@ -59,7 +59,7 @@ STDAPI DllRegisterServer() {
 
     // CLSID string
     wchar_t clsidStr[64] = {};
-    StringFromGUID2(CLSID_FormatBoyVirtualCameraMF, clsidStr, 64);
+    StringFromGUID2(CLSID_HenshinVirtualCameraMF, clsidStr, 64);
 
     // HKLM\SOFTWARE\Classes\CLSID\{...}
     wchar_t keyPath[256] = {};
@@ -91,7 +91,7 @@ STDAPI DllRegisterServer() {
 // ---------------------------------------------------------------------------
 STDAPI DllUnregisterServer() {
     wchar_t clsidStr[64] = {};
-    StringFromGUID2(CLSID_FormatBoyVirtualCameraMF, clsidStr, 64);
+    StringFromGUID2(CLSID_HenshinVirtualCameraMF, clsidStr, 64);
 
     wchar_t keyPath[256] = {};
     _snwprintf_s(keyPath, _countof(keyPath), _TRUNCATE,

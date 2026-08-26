@@ -2,7 +2,7 @@ export const ROUTES = {
   PUBLIC: {
     LOGIN: '/login',
     SIGNUP: '/signup',
-    AUTH_CALLBACK: '/auth/callback',
+    AUTH_CALLBACK: '/auth-callback',
     PAYMENT_SUCCESS: '/payment-success',
   },
   PROTECTED: {

@@ -13,6 +13,19 @@ export interface Transaction {
   timestamp: string;
 }
 
+export interface SessionHistoryEntry {
+  id: string;
+  provider: 'reactor' | 'fal' | 'morphly' | null;
+  providerSessionId: string | null;
+  date: string;
+  duration: number;
+  rate: number;
+  credits: number;
+  status: 'active' | 'ended' | 'interrupted';
+  reason: string | null;
+  model: string | null;
+}
+
 interface AppContextType {
   credits: number;
   setCredits: (credits: number) => void;
@@ -22,6 +35,7 @@ interface AppContextType {
   isLoading: boolean;
   setLoading: (loading: boolean) => void;
   transactions: Transaction[];
+  sessionHistory: SessionHistoryEntry[];
   addTransaction: (transaction: Omit<Transaction, 'id' | 'timestamp'>) => void;
   notifications: Notification[];
   addNotification: (notification: Omit<Notification, 'id' | 'timestamp'>) => void;
@@ -38,7 +52,7 @@ export interface Notification {
 
 const AppContext = createContext<AppContextType | undefined>(undefined);
 
-const TRANSACTIONS_KEY = 'format_boy_transactions';
+const TRANSACTIONS_KEY = 'henshin_transactions';
 
 export function AppProvider({ children }: { children: ReactNode }) {
   const { user } = useAuth();
@@ -46,6 +60,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
   const [sessionStatus, setSessionStatus] = useState<'LIVE' | 'IDLE'>('IDLE');
   const [isLoading, setLoading] = useState(false);
   const [transactions, setTransactions] = useState<Transaction[]>([]);
+  const [sessionHistory, setSessionHistory] = useState<SessionHistoryEntry[]>([]);
   const [notifications, setNotifications] = useState<Notification[]>([]);
 
   const loadCredits = useCallback(async (signal?: AbortSignal) => {
@@ -84,7 +99,13 @@ export function AppProvider({ children }: { children: ReactNode }) {
     } else if ((data as { transactions?: unknown }).transactions !== undefined) {
       console.error('Invalid transactions response', data);
     }
-  }, [user?.id]);
+
+    if (Array.isArray((data as { sessions?: unknown }).sessions)) {
+      setSessionHistory((data as { sessions: SessionHistoryEntry[] }).sessions);
+    } else if ((data as { sessions?: unknown }).sessions !== undefined) {
+      console.error('Invalid session history response', data);
+    }
+  }, [user]);
 
   const refreshCredits = useCallback(async () => {
     await loadCredits();
@@ -95,13 +116,17 @@ export function AppProvider({ children }: { children: ReactNode }) {
 
     const controller = new AbortController();
 
-    loadCredits(controller.signal)
-      .catch(err => {
+    const timeoutId = window.setTimeout(() => {
+      void loadCredits(controller.signal).catch(err => {
         if (isAbortError(err)) return;
         console.warn('Failed to sync credits from backend:', err);
       });
+    }, 0);
 
-    return () => controller.abort();
+    return () => {
+      window.clearTimeout(timeoutId);
+      controller.abort();
+    };
   }, [loadCredits, user?.id]);
 
   const setCredits = useCallback((newCredits: number) => {
@@ -156,11 +181,12 @@ export function AppProvider({ children }: { children: ReactNode }) {
     isLoading,
     setLoading,
     transactions,
+    sessionHistory,
     addTransaction,
     notifications,
     addNotification,
     clearNotifications,
-  }), [credits, setCredits, refreshCredits, sessionStatus, isLoading, transactions, addTransaction, notifications, addNotification, clearNotifications]);
+  }), [credits, setCredits, refreshCredits, sessionStatus, isLoading, transactions, sessionHistory, addTransaction, notifications, addNotification, clearNotifications]);
 
   return (
     <AppContext.Provider value={value}>

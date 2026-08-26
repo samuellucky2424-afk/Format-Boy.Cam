@@ -1,154 +1,146 @@
 // @ts-nocheck
-import { supabaseAdmin, supabaseAdminConfigError } from './supabase.js';
-import { getWalletByUserId, logCreditUpdate, updateWalletCredits } from './credit-utils.js';
-import morphlyTokenHandler from '../server/morphly-token.js';
+import { requireAuthorizedUser, sendApiError } from './auth.js';
+import { getWalletByUserId } from '../server/credit-utils.js';
+import { supabaseAdmin } from './supabase.js';
+import { getProLicenseByUserId, PRO_CONTACT_PHONE, resolveSessionCreditsPerSecond } from '../server/pro-utils.js';
 
-const CREDITS_PER_SECOND = 2;
-const MAX_SESSION_DURATION = 600;
-const HEARTBEAT_GRACE_SECONDS = 3;
-const MORPHLY_API_KEY = process.env.MORPHLY_API_KEY;
+const PROVIDERS = new Set(['reactor', 'fal']);
+const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
-function hasRealtimeCredential(metadata) {
-  return typeof metadata?.realtime_credential_issued_at === 'string'
-    && Number.isFinite(Date.parse(metadata.realtime_credential_issued_at));
-}
-
-async function closeActiveSession(userId, activeSession) {
-  try {
-    const wallet = await getWalletByUserId(userId, { createIfMissing: true });
-    if (!wallet) throw new Error('Wallet not found');
-
-    const actualCredits = wallet.credits;
-    let startTimeStr = typeof activeSession?.start_time === 'string'
-      ? activeSession.start_time
-      : activeSession?.start_time
-        ? new Date(activeSession.start_time).toISOString()
-        : new Date().toISOString();
-    if (!startTimeStr.endsWith('Z') && !startTimeStr.includes('+')) {
-      startTimeStr = startTimeStr.replace(' ', 'T') + 'Z';
-    }
-    const startTime = new Date(startTimeStr).getTime();
-
-    const metadata = activeSession?.metadata && typeof activeSession.metadata === 'object'
-      ? activeSession.metadata
-      : {};
-    const realtimeCredentialIssued = hasRealtimeCredential(metadata);
-    const credentialIssuedMs = realtimeCredentialIssued
-      ? Date.parse(metadata.realtime_credential_issued_at)
-      : NaN;
-    const billableStartMs = Number.isFinite(credentialIssuedMs)
-      ? Math.max(startTime, credentialIssuedMs)
-      : startTime;
-
-    const lastHeartbeatRaw = metadata?.last_heartbeat;
-    const lastHeartbeatMs = typeof lastHeartbeatRaw === 'string' ? new Date(lastHeartbeatRaw).getTime() : NaN;
-
-    const nowMs = Date.now();
-    const maxEndMs = billableStartMs + MAX_SESSION_DURATION * 1000;
-
-    const billingEndMs = !realtimeCredentialIssued
-      ? billableStartMs
-      : Number.isFinite(lastHeartbeatMs)
-        ? Math.min(nowMs, lastHeartbeatMs + HEARTBEAT_GRACE_SECONDS * 1000, maxEndMs)
-        : Math.min(startTime, maxEndMs);
-
-    const billableMs = Math.max(0, billingEndMs - billableStartMs);
-    const elapsedSeconds = Math.floor(billableMs / 1000);
-    const creditsPerSecond = Number.isFinite(activeSession?.credits_per_second)
-      ? activeSession.credits_per_second
-      : CREDITS_PER_SECOND;
-    const cost = Math.round(elapsedSeconds * creditsPerSecond);
-    
-    const finalCost = Math.min(actualCredits, cost);
-    const newCredits = Math.max(0, actualCredits - finalCost);
-
-    await supabaseAdmin
-      .from('sessions')
-      .update({
-        end_time: new Date(billingEndMs).toISOString(),
-        cost: finalCost,
-        seconds_used: elapsedSeconds,
-        credits_used: finalCost,
-        status: 'ended',
-        metadata: realtimeCredentialIssued
-          ? metadata
-          : { ...metadata, ended_without_realtime_credential_at: new Date(nowMs).toISOString() },
-      })
-      .eq('id', activeSession.id).eq('status', 'active');
-
-    const updatedWallet = await updateWalletCredits(userId, newCredits);
-    logCreditUpdate({
-      userId,
-      before: actualCredits,
-      after: updatedWallet.credits,
-      change: -finalCost,
-      source: 'session-close',
-    });
-
-    if (finalCost > 0) {
-      await supabaseAdmin.from('transactions').insert({
-        user_id: userId, type: 'debit', amount: 0, credits: finalCost, description: 'Session usage', status: 'success', created_at: new Date()
-      });
-    }
-
-    return { success: true, deducted: finalCost, remainingCredits: updatedWallet.credits };
-  } catch (err) {
-    console.error('Failed to close session:', err);
-    return { success: false, message: 'Internal error closing session' };
-  }
+async function finishSession(userId, sessionId, reason) {
+  const { error } = await supabaseAdmin.rpc('finish_billed_session', {
+    p_user_id: userId,
+    p_session_id: sessionId,
+    p_reason: reason,
+  });
+  if (error) throw new Error(`Could not reconcile session ${sessionId}: ${error.message}`);
 }
 
 export default async function handler(req, res) {
-  if (req.query?.action === 'morphly-token') {
-    return morphlyTokenHandler(req, res, { morphlyApiKey: MORPHLY_API_KEY });
-  }
+  res.setHeader('Access-Control-Allow-Origin', '*');
+  res.setHeader('Access-Control-Allow-Methods', 'POST, OPTIONS');
+  res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization');
+  res.setHeader('Cache-Control', 'private, no-store');
 
-  res.setHeader("Access-Control-Allow-Origin", "*");
-  res.setHeader("Access-Control-Allow-Methods", "POST, OPTIONS");
-  res.setHeader("Access-Control-Allow-Headers", "Content-Type, Authorization");
-  
   if (req.method === 'OPTIONS') return res.status(200).end();
   if (req.method !== 'POST') return res.status(405).json({ error: 'Method not allowed' });
-  if (!supabaseAdmin) return res.status(503).json({ allowed: false, error: supabaseAdminConfigError });
+
+  const userId = String(req.body?.userId || '').trim();
+  const provider = String(req.body?.provider || '').trim();
+  const clientSessionId = String(req.body?.clientSessionId || '').trim();
+  if (!PROVIDERS.has(provider)) {
+    return res.status(400).json({ allowed: false, error: 'Provider must be reactor or fal' });
+  }
+  if (!UUID_PATTERN.test(clientSessionId)) {
+    return res.status(400).json({ allowed: false, error: 'clientSessionId must be a UUID' });
+  }
 
   try {
-    const { userId } = req.body;
-    if (!userId) return res.status(400).json({ allowed: false, error: 'User ID is required' });
+    await requireAuthorizedUser(req, userId);
 
-    const { data: existingActiveSessions } = await supabaseAdmin
-      .from('sessions').select('*').eq('user_id', userId).eq('status', 'active');
+    const proLicense = provider === 'fal' ? await getProLicenseByUserId(userId) : null;
+    if (provider === 'fal' && proLicense?.status !== 'active') {
+      return res.status(403).json({
+        allowed: false,
+        sessionId: null,
+        error: 'An active PRO license is required',
+        code: 'PRO_LICENSE_REQUIRED',
+        contactPhone: PRO_CONTACT_PHONE,
+      });
+    }
+    const creditsPerSecond = resolveSessionCreditsPerSecond(provider, proLicense);
+    if (!creditsPerSecond) throw new Error('The server resolved an invalid billing rate');
 
-    if (existingActiveSessions && existingActiveSessions.length > 0) {
-      for (const session of existingActiveSessions) {
-        const closeResult = await closeActiveSession(userId, session);
-        if (!closeResult.success) {
-          return res.status(500).json({ allowed: false, error: closeResult.message || 'Failed to reconcile active session' });
-        }
+    const { data: existing, error: existingError } = await supabaseAdmin
+      .from('sessions')
+      .select('id, status, provider, credits_per_second')
+      .eq('user_id', userId)
+      .eq('client_session_id', clientSessionId)
+      .maybeSingle();
+    if (existingError) throw existingError;
+
+    const initialWallet = await getWalletByUserId(userId, { createIfMissing: true });
+    if (existing) {
+      if (existing.provider !== provider) {
+        return res.status(409).json({
+          allowed: false,
+          sessionId: existing.id,
+          credits: initialWallet.credits,
+          error: 'clientSessionId is already associated with another provider',
+        });
       }
+      return res.json({
+        allowed: existing.status === 'active' && initialWallet.credits >= Number(existing.credits_per_second || creditsPerSecond),
+        sessionId: existing.id,
+        credits: initialWallet.credits,
+        creditsPerSecond: Number(existing.credits_per_second || creditsPerSecond),
+      });
     }
 
-    const freshWallet = await getWalletByUserId(userId, { createIfMissing: true });
-    if (!freshWallet) {
-      return res.status(404).json({ allowed: false, error: 'Wallet not found' });
+    const { data: activeSessions, error: activeError } = await supabaseAdmin
+      .from('sessions')
+      .select('id')
+      .eq('user_id', userId)
+      .eq('status', 'active');
+    if (activeError) throw activeError;
+    for (const activeSession of activeSessions || []) {
+      await finishSession(userId, activeSession.id, 'reconciled_on_start');
     }
 
-    const currentCredits = freshWallet.credits;
-
-    if (currentCredits <= 0) {
-      return res.json({ allowed: false, error: 'Insufficient credits', credits: currentCredits });
+    const wallet = await getWalletByUserId(userId, { createIfMissing: true });
+    if (wallet.credits < creditsPerSecond) {
+      return res.json({ allowed: false, sessionId: null, credits: wallet.credits, creditsPerSecond });
     }
 
-    const { data: newSession, error: sessionError } = await supabaseAdmin
+    const model = provider === 'reactor' ? 'xmax/x2' : 'decart/lucy-2-5/realtime';
+    const { data: session, error: insertError } = await supabaseAdmin
       .from('sessions')
       .insert({
-        user_id: userId, status: 'active', start_time: new Date().toISOString(), cost: 0, seconds_used: 0
-      }).select('id').single();
+        user_id: userId,
+        wallet_id: wallet.id,
+        provider,
+        client_session_id: clientSessionId,
+        model,
+        pro_license_id: proLicense?.id || null,
+        status: 'active',
+        start_time: new Date().toISOString(),
+        credits_per_second: creditsPerSecond,
+        seconds_used: 0,
+        credits_used: 0,
+        cost: 0,
+      })
+      .select('id')
+      .single();
 
-    if (sessionError) return res.status(500).json({ allowed: false, error: 'Failed to create session' });
+    if (insertError) {
+      if (insertError.code === '23505') {
+        const { data: raced, error: racedError } = await supabaseAdmin
+          .from('sessions')
+          .select('id, status, provider')
+          .eq('user_id', userId)
+          .eq('client_session_id', clientSessionId)
+          .maybeSingle();
+        if (racedError) throw racedError;
+        if (raced) {
+          const sameProvider = raced.provider === provider;
+          return res.status(sameProvider ? 200 : 409).json({
+            allowed: sameProvider && raced.status === 'active',
+            sessionId: raced.id,
+            credits: wallet.credits,
+            ...(sameProvider ? {} : { error: 'clientSessionId is already associated with another provider' }),
+          });
+        }
+        return res.status(409).json({
+          allowed: false,
+          error: 'Another session is already active',
+          credits: wallet.credits,
+        });
+      }
+      throw insertError;
+    }
 
-    res.json({ allowed: true, sessionId: newSession.id, credits: currentCredits });
+    return res.json({ allowed: true, sessionId: session.id, credits: wallet.credits, creditsPerSecond });
   } catch (error) {
-    console.error('Start session error:', error);
-    res.status(500).json({ allowed: false, error: 'Internal server error' });
+    return sendApiError(res, error, 'Failed to start session');
   }
 }

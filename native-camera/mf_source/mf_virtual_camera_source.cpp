@@ -1,4 +1,4 @@
-// FormatBoy Virtual Camera — Media Foundation Source DLL
+// Henshin Virtual Camera — Media Foundation Source DLL
 // Implements IMFMediaSource + IMFMediaStream.
 //
 // Key correctness requirements (from the implementation guide):
@@ -11,8 +11,8 @@
 #define WIN32_LEAN_AND_MEAN
 #define NOMINMAX
 #include "mf_virtual_camera_source.h"
-#include "../formatboy_protocol.h"
-#include "../formatboy_ids.h"
+#include "../henshin_protocol.h"
+#include "../henshin_ids.h"
 #include <mfapi.h>
 #include <mfidl.h>
 #include <mferror.h>
@@ -77,7 +77,7 @@ static void AppendQiLog(const wchar_t* where, REFIID riid, HRESULT hr) {
 static void AppendRuntimeLog(const wchar_t* message) {
     // Log the process name + PID once per process so we can tell whether
     // it's the FrameServer service (svchost) loading us or the consumer
-    // app (WhatsApp.exe / Camera.exe / Format-Boy.exe).
+    // app (WhatsApp.exe / Camera.exe / Henshin.exe).
     static std::atomic<bool> s_processIdentified{false};
     bool expected = false;
     if (s_processIdentified.compare_exchange_strong(expected, true)) {
@@ -153,19 +153,19 @@ static inline uint8_t ClampToByte(int value) {
 }
 
 // ---------------------------------------------------------------------------
-// FormatBoyActivate
+// HenshinActivate
 // Implements IMFActivate (which extends IMFAttributes).
 // FrameServer calls IClassFactory::CreateInstance, then QIs the result for
 // IMFActivate. It then calls ActivateObject(IID_IMFMediaSource, ...) to get
 // the real capture source. Without this wrapper, Start() returns E_NOINTERFACE.
 // ---------------------------------------------------------------------------
-class FormatBoyActivate : public IMFActivate {
+class HenshinActivate : public IMFActivate {
     std::atomic<ULONG>       m_ref{1};
     ComPtr<IMFAttributes>    m_attrs;
     ComPtr<IMFMediaSourceEx> m_source;
 
 public:
-    FormatBoyActivate() { MFCreateAttributes(&m_attrs, 4); }
+    HenshinActivate() { MFCreateAttributes(&m_attrs, 4); }
 
     // IUnknown
     STDMETHOD(QueryInterface)(REFIID riid, void** ppv) override {
@@ -190,7 +190,7 @@ public:
     STDMETHOD(ActivateObject)(REFIID riid, void** ppv) override {
         AppendRuntimeGuidLog(L"ActivateObject called", riid, GUID_NULL);
         if (!m_source) {
-            HRESULT hr = FormatBoyMFSource::CreateInstance(
+            HRESULT hr = HenshinMFSource::CreateInstance(
                 __uuidof(IMFMediaSourceEx), (void**)&m_source);
             if (FAILED(hr)) return hr;
         }
@@ -243,7 +243,7 @@ public:
 // ---------------------------------------------------------------------------
 // Internal class factory (static singleton — no heap allocation needed)
 // ---------------------------------------------------------------------------
-class FormatBoyClassFactory : public IClassFactory {
+class HenshinClassFactory : public IClassFactory {
 public:
     STDMETHOD(QueryInterface)(REFIID riid, void** ppv) override {
         if (riid == IID_IUnknown || riid == IID_IClassFactory) {
@@ -262,7 +262,7 @@ public:
         if (pOuter) return CLASS_E_NOAGGREGATION;
         // FrameServer expects IMFActivate, not the raw IMFMediaSource.
         // Create an activator wrapper; ActivateObject() will create the source.
-        auto* activate = new (std::nothrow) FormatBoyActivate();
+        auto* activate = new (std::nothrow) HenshinActivate();
         if (!activate) return E_OUTOFMEMORY;
         HRESULT hr = activate->QueryInterface(riid, ppv);
         activate->Release();
@@ -271,30 +271,30 @@ public:
     STDMETHOD(LockServer)(BOOL) override { return S_OK; }
 };
 
-static FormatBoyClassFactory g_factory;
+static HenshinClassFactory g_factory;
 
 HRESULT GetMFClassFactory(REFCLSID rclsid, REFIID riid, void** ppv) {
-    if (rclsid != CLSID_FormatBoyVirtualCameraMF) return CLASS_E_CLASSNOTAVAILABLE;
+    if (rclsid != CLSID_HenshinVirtualCameraMF) return CLASS_E_CLASSNOTAVAILABLE;
     return g_factory.QueryInterface(riid, ppv);
 }
 
 // ===========================================================================
-// FormatBoyMFSource
+// HenshinMFSource
 // ===========================================================================
 
-FormatBoyMFSource::FormatBoyMFSource() {
+HenshinMFSource::HenshinMFSource() {
     InitializeCriticalSection(&m_cs);
 }
 
-FormatBoyMFSource::~FormatBoyMFSource() {
+HenshinMFSource::~HenshinMFSource() {
     Shutdown();
     DeleteCriticalSection(&m_cs);
 }
 
-HRESULT FormatBoyMFSource::CreateInstance(REFIID riid, void** ppv) {
+HRESULT HenshinMFSource::CreateInstance(REFIID riid, void** ppv) {
     *ppv = nullptr;
     AppendRuntimeLog(L"CreateInstance called");
-    auto* p = new (std::nothrow) FormatBoyMFSource();
+    auto* p = new (std::nothrow) HenshinMFSource();
     if (!p) return E_OUTOFMEMORY;
     HRESULT hr = p->Initialize();
     if (SUCCEEDED(hr)) hr = p->QueryInterface(riid, ppv);
@@ -302,13 +302,13 @@ HRESULT FormatBoyMFSource::CreateInstance(REFIID riid, void** ppv) {
     return hr;
 }
 
-HRESULT FormatBoyMFSource::Initialize() {
+HRESULT HenshinMFSource::Initialize() {
     AppendRuntimeLog(L"Initialize started");
     HRESULT hr = MFCreateEventQueue(&m_eventQueue);
     if (FAILED(hr)) return hr;
 
     // Create the one stream
-    m_pStream = new (std::nothrow) FormatBoyMFStream(this);
+    m_pStream = new (std::nothrow) HenshinMFStream(this);
     if (!m_pStream) return E_OUTOFMEMORY;
     m_pStream->AddRef(); // keep a strong reference
 
@@ -354,7 +354,7 @@ HRESULT FormatBoyMFSource::Initialize() {
     return hr;
 }
 
-HRESULT FormatBoyMFSource::InitializeAttributeStores() {
+HRESULT HenshinMFSource::InitializeAttributeStores() {
     // Source attributes — keep the set minimal. MFCreateVirtualCamera's
     // shim layer wraps our source and assigns the real PnP device-interface
     // symbolic link itself; if WE set MF_DEVSOURCE_ATTRIBUTE_*_SYMBOLIC_LINK
@@ -410,7 +410,7 @@ HRESULT FormatBoyMFSource::InitializeAttributeStores() {
 
 // IUnknown -------------------------------------------------------------------
 
-STDMETHODIMP FormatBoyMFSource::QueryInterface(REFIID riid, void** ppv) {
+STDMETHODIMP HenshinMFSource::QueryInterface(REFIID riid, void** ppv) {
     if (!ppv) return E_POINTER;
     *ppv = nullptr;
     if (riid == IID_IUnknown ||
@@ -434,8 +434,8 @@ STDMETHODIMP FormatBoyMFSource::QueryInterface(REFIID riid, void** ppv) {
     AppendQiLog(L"Source", riid, E_NOINTERFACE);
     return E_NOINTERFACE;
 }
-STDMETHODIMP_(ULONG) FormatBoyMFSource::AddRef()  { return ++m_ref; }
-STDMETHODIMP_(ULONG) FormatBoyMFSource::Release() {
+STDMETHODIMP_(ULONG) HenshinMFSource::AddRef()  { return ++m_ref; }
+STDMETHODIMP_(ULONG) HenshinMFSource::Release() {
     ULONG r = --m_ref;
     if (r == 0) delete this;
     return r;
@@ -443,26 +443,26 @@ STDMETHODIMP_(ULONG) FormatBoyMFSource::Release() {
 
 // IMFMediaEventGenerator -----------------------------------------------------
 
-STDMETHODIMP FormatBoyMFSource::GetEvent(DWORD f, IMFMediaEvent** pp)
+STDMETHODIMP HenshinMFSource::GetEvent(DWORD f, IMFMediaEvent** pp)
     { return m_eventQueue->GetEvent(f, pp); }
-STDMETHODIMP FormatBoyMFSource::BeginGetEvent(IMFAsyncCallback* cb, IUnknown* s)
+STDMETHODIMP HenshinMFSource::BeginGetEvent(IMFAsyncCallback* cb, IUnknown* s)
     { return m_eventQueue->BeginGetEvent(cb, s); }
-STDMETHODIMP FormatBoyMFSource::EndGetEvent(IMFAsyncResult* r, IMFMediaEvent** pp)
+STDMETHODIMP HenshinMFSource::EndGetEvent(IMFAsyncResult* r, IMFMediaEvent** pp)
     { return m_eventQueue->EndGetEvent(r, pp); }
-STDMETHODIMP FormatBoyMFSource::QueueEvent(MediaEventType t, REFGUID ext,
+STDMETHODIMP HenshinMFSource::QueueEvent(MediaEventType t, REFGUID ext,
                                              HRESULT hr, const PROPVARIANT* pv)
     { return m_eventQueue->QueueEventParamVar(t, ext, hr, pv); }
 
 // IMFMediaSource -------------------------------------------------------------
 
-STDMETHODIMP FormatBoyMFSource::GetCharacteristics(DWORD* pdw) {
+STDMETHODIMP HenshinMFSource::GetCharacteristics(DWORD* pdw) {
     AppendRuntimeLog(L"GetCharacteristics called");
     if (!pdw) return E_POINTER;
     *pdw = MFMEDIASOURCE_IS_LIVE;
     return S_OK;
 }
 
-STDMETHODIMP FormatBoyMFSource::CreatePresentationDescriptor(IMFPresentationDescriptor** ppPD) {
+STDMETHODIMP HenshinMFSource::CreatePresentationDescriptor(IMFPresentationDescriptor** ppPD) {
     AppendRuntimeLog(L"CreatePresentationDescriptor called");
     if (!ppPD) return E_POINTER;
     EnterCriticalSection(&m_cs);
@@ -471,7 +471,7 @@ STDMETHODIMP FormatBoyMFSource::CreatePresentationDescriptor(IMFPresentationDesc
     return hr;
 }
 
-STDMETHODIMP FormatBoyMFSource::Start(IMFPresentationDescriptor* /*pPD*/,
+STDMETHODIMP HenshinMFSource::Start(IMFPresentationDescriptor* /*pPD*/,
                                        const GUID* /*pFmt*/,
                                        const PROPVARIANT* pStart) {
     AppendRuntimeLog(L"Start called");
@@ -487,7 +487,7 @@ STDMETHODIMP FormatBoyMFSource::Start(IMFPresentationDescriptor* /*pPD*/,
 
     bool wasRunning = m_running.exchange(true);
     if (!wasRunning) {
-        m_thread = std::thread(&FormatBoyMFSource::DeliveryLoop, this);
+        m_thread = std::thread(&HenshinMFSource::DeliveryLoop, this);
     }
     LeaveCriticalSection(&m_cs);
 
@@ -527,7 +527,7 @@ STDMETHODIMP FormatBoyMFSource::Start(IMFPresentationDescriptor* /*pPD*/,
     return S_OK;
 }
 
-STDMETHODIMP FormatBoyMFSource::Stop() {
+STDMETHODIMP HenshinMFSource::Stop() {
     AppendRuntimeLog(L"Stop called");
     m_running = false;
     if (m_thread.joinable()) m_thread.join();
@@ -547,7 +547,7 @@ STDMETHODIMP FormatBoyMFSource::Stop() {
     return S_OK;
 }
 
-STDMETHODIMP FormatBoyMFSource::Pause() {
+STDMETHODIMP HenshinMFSource::Pause() {
     AppendRuntimeLog(L"Pause called");
     m_running = false;
     if (m_thread.joinable()) m_thread.join();
@@ -562,7 +562,7 @@ STDMETHODIMP FormatBoyMFSource::Pause() {
     return S_OK;
 }
 
-STDMETHODIMP FormatBoyMFSource::Shutdown() {
+STDMETHODIMP HenshinMFSource::Shutdown() {
     AppendRuntimeLog(L"Shutdown called");
     EnterCriticalSection(&m_cs);
     bool already = m_shutdown;
@@ -595,7 +595,7 @@ STDMETHODIMP FormatBoyMFSource::Shutdown() {
 
 // IMFGetService --------------------------------------------------------------
 
-STDMETHODIMP FormatBoyMFSource::GetService(REFGUID guidService, REFIID riid, LPVOID* ppv) {
+STDMETHODIMP HenshinMFSource::GetService(REFGUID guidService, REFIID riid, LPVOID* ppv) {
     AppendRuntimeGuidLog(L"GetService called", guidService, riid);
     if (ppv) *ppv = nullptr;
     // WhatsApp probes optional services with GUID_NULL as the service id
@@ -610,7 +610,7 @@ STDMETHODIMP FormatBoyMFSource::GetService(REFGUID guidService, REFIID riid, LPV
 
 // IKsControl --------------------------------------------------------------
 
-STDMETHODIMP FormatBoyMFSource::KsProperty(void* Property, ULONG PropertyLength,
+STDMETHODIMP HenshinMFSource::KsProperty(void* Property, ULONG PropertyLength,
                                            LPVOID PropertyData, ULONG DataLength,
                                            ULONG* BytesReturned) {
     UNREFERENCED_PARAMETER(Property);
@@ -622,7 +622,7 @@ STDMETHODIMP FormatBoyMFSource::KsProperty(void* Property, ULONG PropertyLength,
     return HRESULT_FROM_WIN32(ERROR_SET_NOT_FOUND);
 }
 
-STDMETHODIMP FormatBoyMFSource::KsMethod(void* Method, ULONG MethodLength,
+STDMETHODIMP HenshinMFSource::KsMethod(void* Method, ULONG MethodLength,
                                          LPVOID MethodData, ULONG DataLength,
                                          ULONG* BytesReturned) {
     UNREFERENCED_PARAMETER(Method);
@@ -634,7 +634,7 @@ STDMETHODIMP FormatBoyMFSource::KsMethod(void* Method, ULONG MethodLength,
     return HRESULT_FROM_WIN32(ERROR_SET_NOT_FOUND);
 }
 
-STDMETHODIMP FormatBoyMFSource::KsEvent(void* Event, ULONG EventLength,
+STDMETHODIMP HenshinMFSource::KsEvent(void* Event, ULONG EventLength,
                                         LPVOID EventData, ULONG DataLength,
                                         ULONG* BytesReturned) {
     UNREFERENCED_PARAMETER(Event);
@@ -649,7 +649,7 @@ STDMETHODIMP FormatBoyMFSource::KsEvent(void* Event, ULONG EventLength,
 // IMFMediaSourceEx -----------------------------------------------------------
 // FrameServer QIs for IMFMediaSourceEx; without it Start() returns E_NOINTERFACE.
 
-STDMETHODIMP FormatBoyMFSource::GetSourceAttributes(IMFAttributes** ppAttributes) {
+STDMETHODIMP HenshinMFSource::GetSourceAttributes(IMFAttributes** ppAttributes) {
     AppendRuntimeLog(L"GetSourceAttributes called");
     if (!ppAttributes) return E_POINTER;
     *ppAttributes = nullptr;
@@ -663,7 +663,7 @@ STDMETHODIMP FormatBoyMFSource::GetSourceAttributes(IMFAttributes** ppAttributes
     return S_OK;
 }
 
-STDMETHODIMP FormatBoyMFSource::GetStreamAttributes(DWORD /*dwStreamIdentifier*/,
+STDMETHODIMP HenshinMFSource::GetStreamAttributes(DWORD /*dwStreamIdentifier*/,
                                                       IMFAttributes** ppAttributes) {
     AppendRuntimeLog(L"GetStreamAttributes called");
     if (!ppAttributes) return E_POINTER;
@@ -674,7 +674,7 @@ STDMETHODIMP FormatBoyMFSource::GetStreamAttributes(DWORD /*dwStreamIdentifier*/
     return S_OK;
 }
 
-STDMETHODIMP FormatBoyMFSource::SetD3DManager(IUnknown* pManager) {
+STDMETHODIMP HenshinMFSource::SetD3DManager(IUnknown* pManager) {
     AppendRuntimeLog(pManager ? L"SetD3DManager called (manager provided)"
                               : L"SetD3DManager called (null manager)");
 
@@ -687,7 +687,7 @@ STDMETHODIMP FormatBoyMFSource::SetD3DManager(IUnknown* pManager) {
 
 // File bridge ----------------------------------------------------------------
 
-HRESULT FormatBoyMFSource::TryOpenFileBridge() {
+HRESULT HenshinMFSource::TryOpenFileBridge() {
     if (m_pView) return S_OK; // already open
 
     const std::wstring bridgePath = GetFileBridgePath();
@@ -725,7 +725,7 @@ HRESULT FormatBoyMFSource::TryOpenFileBridge() {
     return S_OK;
 }
 
-void FormatBoyMFSource::ResetCachedFrameState() {
+void HenshinMFSource::ResetCachedFrameState() {
     m_cachedFrame.clear();
     m_cachedWidth = 0;
     m_cachedHeight = 0;
@@ -734,7 +734,7 @@ void FormatBoyMFSource::ResetCachedFrameState() {
 
 // Delivery loop --------------------------------------------------------------
 
-void FormatBoyMFSource::DeliveryLoop() {
+void HenshinMFSource::DeliveryLoop() {
     // Absolute frame pacing: schedule each tick from a fixed start time so we
     // do not drift across devices with different timer resolutions, and so
     // RequestSample never has to wait a full frame for the first delivery.
@@ -882,23 +882,23 @@ void FormatBoyMFSource::DeliveryLoop() {
 }
 
 // ===========================================================================
-// FormatBoyMFStream
+// HenshinMFStream
 // ===========================================================================
 
-FormatBoyMFStream::FormatBoyMFStream(FormatBoyMFSource* pSource)
+HenshinMFStream::HenshinMFStream(HenshinMFSource* pSource)
     : m_pSource(pSource)
 {
     if (m_pSource) m_pSource->AddRef();
     InitializeCriticalSection(&m_cs);
 }
 
-FormatBoyMFStream::~FormatBoyMFStream() {
+HenshinMFStream::~HenshinMFStream() {
     ResetStreamingState();
     if (m_pSource) m_pSource->Release();
     DeleteCriticalSection(&m_cs);
 }
 
-HRESULT FormatBoyMFStream::Initialize(uint32_t w, uint32_t h,
+HRESULT HenshinMFStream::Initialize(uint32_t w, uint32_t h,
                                        uint32_t fpsNum, uint32_t fpsDen) {
     m_width  = w;
     m_height = h;
@@ -966,7 +966,7 @@ HRESULT FormatBoyMFStream::Initialize(uint32_t w, uint32_t h,
 
 // IUnknown -------------------------------------------------------------------
 
-STDMETHODIMP FormatBoyMFStream::QueryInterface(REFIID riid, void** ppv) {
+STDMETHODIMP HenshinMFStream::QueryInterface(REFIID riid, void** ppv) {
     if (!ppv) return E_POINTER;
     *ppv = nullptr;
     if (riid == IID_IUnknown ||
@@ -979,8 +979,8 @@ STDMETHODIMP FormatBoyMFStream::QueryInterface(REFIID riid, void** ppv) {
     AppendQiLog(L"Stream", riid, E_NOINTERFACE);
     return E_NOINTERFACE;
 }
-STDMETHODIMP_(ULONG) FormatBoyMFStream::AddRef()  { return ++m_ref; }
-STDMETHODIMP_(ULONG) FormatBoyMFStream::Release() {
+STDMETHODIMP_(ULONG) HenshinMFStream::AddRef()  { return ++m_ref; }
+STDMETHODIMP_(ULONG) HenshinMFStream::Release() {
     ULONG r = --m_ref;
     if (r == 0) delete this;
     return r;
@@ -988,26 +988,26 @@ STDMETHODIMP_(ULONG) FormatBoyMFStream::Release() {
 
 // IMFMediaEventGenerator -----------------------------------------------------
 
-STDMETHODIMP FormatBoyMFStream::GetEvent(DWORD f, IMFMediaEvent** pp)
+STDMETHODIMP HenshinMFStream::GetEvent(DWORD f, IMFMediaEvent** pp)
     { return m_eventQueue->GetEvent(f, pp); }
-STDMETHODIMP FormatBoyMFStream::BeginGetEvent(IMFAsyncCallback* cb, IUnknown* s)
+STDMETHODIMP HenshinMFStream::BeginGetEvent(IMFAsyncCallback* cb, IUnknown* s)
     { return m_eventQueue->BeginGetEvent(cb, s); }
-STDMETHODIMP FormatBoyMFStream::EndGetEvent(IMFAsyncResult* r, IMFMediaEvent** pp)
+STDMETHODIMP HenshinMFStream::EndGetEvent(IMFAsyncResult* r, IMFMediaEvent** pp)
     { return m_eventQueue->EndGetEvent(r, pp); }
-STDMETHODIMP FormatBoyMFStream::QueueEvent(MediaEventType t, REFGUID ext,
+STDMETHODIMP HenshinMFStream::QueueEvent(MediaEventType t, REFGUID ext,
                                              HRESULT hr, const PROPVARIANT* pv)
     { return m_eventQueue->QueueEventParamVar(t, ext, hr, pv); }
 
 // IMFMediaStream -------------------------------------------------------------
 
-STDMETHODIMP FormatBoyMFStream::GetMediaSource(IMFMediaSource** pp) {
+STDMETHODIMP HenshinMFStream::GetMediaSource(IMFMediaSource** pp) {
     if (!pp) return E_POINTER;
     *pp = m_pSource;
     if (*pp) (*pp)->AddRef();
     return S_OK;
 }
 
-STDMETHODIMP FormatBoyMFStream::GetStreamDescriptor(IMFStreamDescriptor** pp) {
+STDMETHODIMP HenshinMFStream::GetStreamDescriptor(IMFStreamDescriptor** pp) {
     if (!pp) return E_POINTER;
     if (!m_streamDesc) return MF_E_NOT_INITIALIZED;
     *pp = m_streamDesc.Get();
@@ -1015,7 +1015,7 @@ STDMETHODIMP FormatBoyMFStream::GetStreamDescriptor(IMFStreamDescriptor** pp) {
     return S_OK;
 }
 
-STDMETHODIMP FormatBoyMFStream::RequestSample(IUnknown* pToken) {
+STDMETHODIMP HenshinMFStream::RequestSample(IUnknown* pToken) {
     AppendRuntimeLog(L"RequestSample called");
     EnterCriticalSection(&m_cs);
     if (pToken) pToken->AddRef();
@@ -1024,14 +1024,14 @@ STDMETHODIMP FormatBoyMFStream::RequestSample(IUnknown* pToken) {
     return S_OK;
 }
 
-bool FormatBoyMFStream::HasPendingSampleRequest() {
+bool HenshinMFStream::HasPendingSampleRequest() {
     EnterCriticalSection(&m_cs);
     const bool hasPending = !m_pendingTokens.empty();
     LeaveCriticalSection(&m_cs);
     return hasPending;
 }
 
-void FormatBoyMFStream::ResetStreamingState() {
+void HenshinMFStream::ResetStreamingState() {
     EnterCriticalSection(&m_cs);
     while (!m_pendingTokens.empty()) {
         IUnknown* token = m_pendingTokens.front();
@@ -1046,7 +1046,7 @@ void FormatBoyMFStream::ResetStreamingState() {
 
 // Fill an NV12 buffer with a single solid color expressed as full-range
 // BT.601 (Y, Cb, Cr). Used by both the black-frame fallback path and the
-// FORMATBOY_VCAM_TEST_PATTERN diagnostic mode.
+// HENSHIN_VCAM_TEST_PATTERN diagnostic mode.
 static void FillNv12Solid(uint8_t* nv12, uint32_t w, uint32_t h,
                           uint8_t y, uint8_t cb, uint8_t cr) {
     if (!nv12 || w == 0 || h == 0) return;
@@ -1109,7 +1109,7 @@ static GUID GetCurrentOutputSubtype(IMFStreamDescriptor* streamDesc) {
     return subtype;
 }
 
-// Resolve the FORMATBOY_VCAM_TEST_PATTERN env var to an NV12 fill color.
+// Resolve the HENSHIN_VCAM_TEST_PATTERN env var to an NV12 fill color.
 // Returns false if no pattern is configured. Read once and cached so the
 // hot path stays branch-free after first sample.
 static bool GetNv12TestPattern(uint8_t& y, uint8_t& cb, uint8_t& cr) {
@@ -1118,7 +1118,7 @@ static bool GetNv12TestPattern(uint8_t& y, uint8_t& cb, uint8_t& cr) {
 
     if (s_cached < 0) {
         wchar_t buf[32] = {};
-        DWORD n = GetEnvironmentVariableW(L"FORMATBOY_VCAM_TEST_PATTERN",
+        DWORD n = GetEnvironmentVariableW(L"HENSHIN_VCAM_TEST_PATTERN",
                                            buf, _countof(buf));
         if (n == 0 || n >= _countof(buf)) {
             s_cached = 0;
@@ -1148,7 +1148,7 @@ static bool GetNv12TestPattern(uint8_t& y, uint8_t& cb, uint8_t& cr) {
 
 // Sample delivery ------------------------------------------------------------
 
-HRESULT FormatBoyMFStream::DeliverSample(const uint8_t* bgra,
+HRESULT HenshinMFStream::DeliverSample(const uint8_t* bgra,
                                           uint32_t w, uint32_t h,
                                           IUnknown* /*token*/) {
     // Width/height come from the source; reject anything off-spec.
@@ -1192,7 +1192,7 @@ HRESULT FormatBoyMFStream::DeliverSample(const uint8_t* bgra,
     }
 
     // Decide what to write into the output buffer:
-    //   1. FORMATBOY_VCAM_TEST_PATTERN  -> solid color (diagnostic)
+    //   1. HENSHIN_VCAM_TEST_PATTERN  -> solid color (diagnostic)
     //   2. Valid BGRA frame             -> CPU BGRA->NV12 / BGRA->YUY2 conversion
     //   3. Otherwise                    -> pure black fallback in the selected format
     uint8_t patY = 0, patCb = 128, patCr = 128;
@@ -1282,7 +1282,7 @@ HRESULT FormatBoyMFStream::DeliverSample(const uint8_t* bgra,
 //   Cr = ((128*R - 107*G -  21*B + 128) >> 8) + 128
 // UV plane: interleaved Cb,Cr averaged over each 2x2 pixel block
 
-void FormatBoyMFStream::BgraToNv12(const uint8_t* bgra,
+void HenshinMFStream::BgraToNv12(const uint8_t* bgra,
                                     uint32_t w, uint32_t h,
                                     uint8_t* nv12) {
     if (!bgra || !nv12 || w == 0 || h == 0 || (w & 1) != 0 || (h & 1) != 0) {
@@ -1323,7 +1323,7 @@ void FormatBoyMFStream::BgraToNv12(const uint8_t* bgra,
     }
 }
 
-void FormatBoyMFStream::BgraToYuy2(const uint8_t* bgra,
+void HenshinMFStream::BgraToYuy2(const uint8_t* bgra,
                                     uint32_t w, uint32_t h,
                                     uint8_t* yuy2) {
     if (!bgra || !yuy2 || w == 0 || h == 0 || (w & 1) != 0) {

@@ -20,4 +20,18 @@ export default defineConfig([
       globals: globals.browser,
     },
   },
+  {
+    files: ['api/**/*.ts', 'server/**/*.ts'],
+    rules: {
+      // Legacy serverless handlers are loaded directly by both Vercel and Bun.
+      '@typescript-eslint/ban-ts-comment': 'off',
+    },
+  },
+  {
+    files: ['src/components/ui/**/*.tsx', 'src/context/**/*.tsx'],
+    rules: {
+      // Generated UI modules and providers intentionally co-export helpers.
+      'react-refresh/only-export-components': 'off',
+    },
+  },
 ])

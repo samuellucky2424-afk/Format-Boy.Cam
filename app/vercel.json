@@ -1,16 +1,52 @@
 {
+  "$schema": "https://openapi.vercel.sh/vercel.json",
+  "bunVersion": "1.x",
+  "framework": "vite",
+  "installCommand": "bun install --frozen-lockfile",
+  "buildCommand": "bun run vercel:build",
+  "outputDirectory": "dist",
+  "crons": [
+    {
+      "path": "/api/reconcile-sessions",
+      "schedule": "0 3 * * *"
+    }
+  ],
   "rewrites": [
     {
-      "source": "/api/morphly-token",
-      "destination": "/api/start-session?action=morphly-token"
+      "source": "/api/admin",
+      "destination": "/api/pro?route=admin"
     },
     {
-      "source": "/api/payment/crypto-submit",
-      "destination": "/api/wallet?action=crypto-submit"
+      "source": "/api/fal-realtime-token",
+      "destination": "/api/pro?route=fal-realtime-token"
     },
     {
-      "source": "/api/payment-methods",
-      "destination": "/api/wallet?action=payment-methods"
+      "source": "/api/pro-license",
+      "destination": "/api/pro?route=pro-license"
+    },
+    {
+      "source": "/api/reconcile-sessions",
+      "destination": "/api/pro?route=reconcile-sessions"
+    },
+    {
+      "source": "/auth-callback",
+      "destination": "/"
+    },
+    {
+      "source": "/api/payment/fapshi-init",
+      "destination": "/api/wallet?action=fapshi-init"
+    },
+    {
+      "source": "/api/payment/fapshi-return",
+      "destination": "/api/wallet?action=fapshi-return"
+    },
+    {
+      "source": "/api/payment/fapshi-status",
+      "destination": "/api/wallet?action=fapshi-status"
+    },
+    {
+      "source": "/api/payment/fapshi-webhook",
+      "destination": "/api/wallet?action=fapshi-webhook"
     }
   ]
 }

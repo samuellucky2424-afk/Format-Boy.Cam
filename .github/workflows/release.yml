@@ -1,9 +1,20 @@
 name: Build and Release
 
 on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Release tag to build
+        required: true
+        default: v2.0.28
+      allow_unsigned:
+        description: Publish an unsigned test prerelease
+        required: true
+        type: boolean
+        default: false
   push:
     tags:
-      - 'v*.*.*'  # Trigger on version tags like v1.0.0, v1.1.0, etc.
+      - 'v*.*.*'
 
 permissions:
   contents: write
@@ -11,129 +22,132 @@ permissions:
 jobs:
   build-and-release:
     runs-on: windows-latest
+    env:
+      RELEASE_TAG: ${{ inputs.tag || github.ref_name }}
+      UNSIGNED_TEST: ${{ inputs.allow_unsigned || false }}
 
     steps:
-      - name: Checkout code
+      - name: Checkout
         uses: actions/checkout@v4
-
-      - name: Clean previous release output
-        shell: powershell
-        run: |
-          if (Test-Path "./app/release") {
-            Remove-Item "./app/release" -Recurse -Force
-          }
 
       - name: Set up Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: '18'
+          node-version: '22'
 
-      - name: Sync app version from tag
-        working-directory: ./app
+      - name: Set up Bun
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: '1.3.14'
+
+      - name: Synchronize release version
+        working-directory: app
         shell: powershell
         run: |
-          $version = "${{ github.ref_name }}" -replace '^v', ''
-          npm version $version --no-git-tag-version --allow-same-version
-
-          $packageVersion = (Get-Content "./package.json" -Raw | ConvertFrom-Json).version
+          $version = '${{ env.RELEASE_TAG }}' -replace '^v', ''
+          bun run release:sync $version
+          $packageVersion = (Get-Content -LiteralPath 'package.json' -Raw | ConvertFrom-Json).version
           if ($packageVersion -ne $version) {
-            Write-Error "Package version $packageVersion does not match release tag $version"
-            exit 1
+            throw "Package version $packageVersion does not match tag $version"
           }
 
-      - name: Install dependencies
-        working-directory: ./app
-        run: npm ci
+      - name: Install locked dependencies
+        working-directory: app
+        run: bun install --frozen-lockfile
 
-      - name: Validate release environment
-        shell: powershell
-        env:
-          VITE_API_BASE_URL: ${{ secrets.VITE_API_BASE_URL }}
-          VITE_PAYSTACK_PUBLIC_KEY: ${{ secrets.VITE_PAYSTACK_PUBLIC_KEY }}
-          VITE_SUPABASE_URL: ${{ secrets.VITE_SUPABASE_URL }}
-          VITE_SUPABASE_ANON_KEY: ${{ secrets.VITE_SUPABASE_ANON_KEY }}
-        run: |
-          $required = @(
-            'VITE_API_BASE_URL',
-            'VITE_PAYSTACK_PUBLIC_KEY',
-            'VITE_SUPABASE_URL',
-            'VITE_SUPABASE_ANON_KEY'
-          )
-
-          foreach ($name in $required) {
-            if ([string]::IsNullOrWhiteSpace((Get-Item "Env:$name").Value)) {
-              Write-Error "Required GitHub Actions secret is missing: $name"
-              exit 1
-            }
-          }
-
-          if ($env:VITE_SUPABASE_URL -ne 'https://wwehdzkmoxyfkvkrascn.supabase.co') {
-            Write-Error 'Release is not configured for the current Supabase project.'
-            exit 1
-          }
-
-          @"
-          VITE_API_BASE_URL=$env:VITE_API_BASE_URL
-          VITE_PAYSTACK_PUBLIC_KEY=$env:VITE_PAYSTACK_PUBLIC_KEY
-          VITE_SUPABASE_URL=$env:VITE_SUPABASE_URL
-          VITE_SUPABASE_ANON_KEY=$env:VITE_SUPABASE_ANON_KEY
-          "@ | Set-Content -Path './app/.env' -Encoding utf8
-
-      - name: Build native camera binaries (cmake)
+      - name: Build native camera binaries
         shell: powershell
         run: |
           cmake -S native-camera -B native-camera/build -A x64
-          cmake --build native-camera/build --config Release
-          Write-Host "Native camera build output:"
-          Get-ChildItem -Path "native-camera/build/Release" | Select-Object Name
+          cmake --build native-camera/build --config Release --parallel
 
-      - name: Build app
-        working-directory: ./app
-        run: npm run electron:release
+      - name: Sign native camera binaries
+        shell: powershell
+        env:
+          WINDOWS_PFX_BASE64: ${{ secrets.WINDOWS_PFX_BASE64 }}
+          WINDOWS_PFX_PASSWORD: ${{ secrets.WINDOWS_PFX_PASSWORD }}
+        run: |
+          if ([string]::IsNullOrWhiteSpace($env:WINDOWS_PFX_BASE64) -or [string]::IsNullOrWhiteSpace($env:WINDOWS_PFX_PASSWORD)) {
+            if ($env:UNSIGNED_TEST -ne 'true') {
+              throw 'Production releases require WINDOWS_PFX_BASE64 and WINDOWS_PFX_PASSWORD.'
+            }
+            Write-Warning 'Publishing an explicitly authorized unsigned test prerelease.'
+            "CSC_IDENTITY_AUTO_DISCOVERY=false" >> $env:GITHUB_ENV
+            return
+          }
+          $pfxPath = Join-Path $env:RUNNER_TEMP 'henshin-signing.pfx'
+          [IO.File]::WriteAllBytes($pfxPath, [Convert]::FromBase64String($env:WINDOWS_PFX_BASE64))
+          $signTool = Get-ChildItem "${env:ProgramFiles(x86)}\Windows Kits\10\bin" -Filter signtool.exe -Recurse |
+            Where-Object { $_.FullName -match '\\x64\\signtool\.exe$' } |
+            Sort-Object FullName -Descending |
+            Select-Object -First 1
+          if (-not $signTool) { throw 'signtool.exe x64 was not found.' }
+          $nativeFiles = @(
+            'native-camera/build/Release/henshin_cam_registrar.exe',
+            'native-camera/build/Release/henshin_cam_pipe_publisher.exe',
+            'native-camera/build/Release/HenshinVirtualCameraMF.dll',
+            'native-camera/build/Release/HenshinVirtualCamera.dll'
+          )
+          foreach ($file in $nativeFiles) {
+            & $signTool.FullName sign /fd SHA256 /td SHA256 /tr http://timestamp.digicert.com /f $pfxPath /p $env:WINDOWS_PFX_PASSWORD $file
+            if ($LASTEXITCODE -ne 0) { throw "Signing failed for $file" }
+          }
+          "CSC_LINK=$pfxPath" >> $env:GITHUB_ENV
+          "CSC_KEY_PASSWORD=$env:WINDOWS_PFX_PASSWORD" >> $env:GITHUB_ENV
+
+      - name: Release preflight
+        working-directory: app
+        run: bun run release:preflight
         env:
           NODE_OPTIONS: --max-old-space-size=4096
           VITE_API_BASE_URL: ${{ secrets.VITE_API_BASE_URL }}
-          VITE_PAYSTACK_PUBLIC_KEY: ${{ secrets.VITE_PAYSTACK_PUBLIC_KEY }}
           VITE_SUPABASE_URL: ${{ secrets.VITE_SUPABASE_URL }}
           VITE_SUPABASE_ANON_KEY: ${{ secrets.VITE_SUPABASE_ANON_KEY }}
 
-      - name: Find built installer
-        id: find_installer
+      - name: Build Windows installer
+        working-directory: app
+        run: bun run electron-builder --win nsis --publish never
+        env:
+          NODE_OPTIONS: --max-old-space-size=4096
+          VITE_API_BASE_URL: ${{ secrets.VITE_API_BASE_URL }}
+          VITE_SUPABASE_URL: ${{ secrets.VITE_SUPABASE_URL }}
+          VITE_SUPABASE_ANON_KEY: ${{ secrets.VITE_SUPABASE_ANON_KEY }}
+
+      - name: Locate exact installer and calculate SHA256
+        id: artifact
         shell: powershell
         run: |
-          $version = "${{ github.ref_name }}" -replace '^v', ''
-          $expectedInstaller = "CALL ME Setup $version.exe"
-
-          Write-Host "Listing ./app/release folder:"
-          Get-ChildItem -Path "./app/release" -Recurse | Select-Object FullName | Format-List
-
-          $exe = Get-ChildItem -Path "./app/release" -Filter $expectedInstaller -Recurse | Select-Object -First 1
-          if ($exe) {
-            $relativePath = "app/release/$($exe.Name)"
-            echo "exe_path=$relativePath" >> $env:GITHUB_OUTPUT
-            echo "exe_name=$($exe.Name)" >> $env:GITHUB_OUTPUT
-            Write-Host "Found executable: $relativePath"
-          } else {
-            Write-Host "Expected installer not found: $expectedInstaller"
-            Get-ChildItem -Path "./app/release" -Recurse | Format-List
-            exit 1
+          $version = '${{ env.RELEASE_TAG }}' -replace '^v', ''
+          $name = "Henshin-Setup-$version.exe"
+          $path = Join-Path '${{ github.workspace }}' "app/release/$name"
+          if (-not (Test-Path -LiteralPath $path -PathType Leaf)) {
+            throw "Expected installer not found: $path"
           }
+          $hash = (Get-FileHash -LiteralPath $path -Algorithm SHA256).Hash.ToLowerInvariant()
+          $checksumPath = "$path.sha256"
+          "$hash  $name" | Set-Content -LiteralPath $checksumPath -Encoding ascii
+          "installer=$path" >> $env:GITHUB_OUTPUT
+          "checksum=$checksumPath" >> $env:GITHUB_OUTPUT
+          "sha256=$hash" >> $env:GITHUB_OUTPUT
+          "name=$name" >> $env:GITHUB_OUTPUT
 
-      - name: Calculate SHA256
-        id: sha256
-        shell: powershell
-        run: |
-          $hash = (Get-FileHash -Path "${{ steps.find_installer.outputs.exe_path }}" -Algorithm SHA256).Hash
-          echo "hash=$hash" >> $env:GITHUB_OUTPUT
-          Write-Host "SHA256: $hash"
-
-      - name: Create Release and Upload Asset
-        uses: softprops/action-gh-release@v1
+      - name: Create GitHub release
+        uses: softprops/action-gh-release@v2
         with:
-          files: ${{ steps.find_installer.outputs.exe_path }}
+          tag_name: ${{ env.RELEASE_TAG }}
+          target_commitish: ${{ github.sha }}
+          prerelease: ${{ inputs.allow_unsigned || false }}
+          make_latest: ${{ inputs.allow_unsigned && 'false' || 'true' }}
+          files: |
+            ${{ steps.artifact.outputs.installer }}
+            ${{ steps.artifact.outputs.checksum }}
           body: |
-            ## CALL ME ${{ github.ref_name }}
-            
-            **SHA256:** `${{ steps.sha256.outputs.hash }}`
+            ## Henshin ${{ env.RELEASE_TAG }}
+
+            ${{ inputs.allow_unsigned && '> **Unsigned test build:** Windows SmartScreen may display a warning. Use this build for testing only.' || '' }}
+
+            Windows 10 x64 and Windows 11 x64.
+
+            **SHA256:** `${{ steps.artifact.outputs.sha256 }}`
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

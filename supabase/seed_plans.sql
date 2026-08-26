@@ -1,10 +1,10 @@
 -- Clean up all existing plans first to prevent duplicates
 DELETE FROM public.plans;
 
--- Seed the plans table with Format-Boy Cam credit packs
+-- Seed the plans table with Henshin credit packs
 INSERT INTO public.plans (name, price, credits, duration_minutes, usd_price)
 VALUES
-  ('Starter', 14000, 500, 4, 10.00),
-  ('Basic', 28000, 1000, 8, 20.00),
-  ('Pro', 56000, 2000, 16, 40.00),
-  ('Enterprise', 140000, 5000, 40, 100.00);
+  ('Starter', 8000, 9400, 78, 14.00),
+  ('Basic', 14000, 21800, 181, 24.50),
+  ('Pro', 25000, 44400, 370, 43.75),
+  ('Enterprise', 140000, 281200, 2343, 245.00);

@@ -1,4 +1,4 @@
--- Format-Boy Cam - Complete Schema for New Supabase Project
+-- Henshin - Complete Schema for New Supabase Project
 
 -- Enable UUID extension
 CREATE EXTENSION IF NOT EXISTS "uuid-ossp";
@@ -69,7 +69,7 @@ CREATE TABLE IF NOT EXISTS public.sessions (
   credits_used INTEGER DEFAULT 0,
   cost NUMERIC(12, 2) DEFAULT 0,
   status TEXT DEFAULT 'active' CHECK (status IN ('active', 'ended', 'interrupted')),
-  model TEXT DEFAULT 'format-boy-cam-v1',
+  model TEXT DEFAULT 'henshin-v1',
   metadata JSONB DEFAULT '{}',
   created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
 );
@@ -81,7 +81,7 @@ CREATE TABLE IF NOT EXISTS public.credit_packages (
   id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
   name TEXT,
   credits INTEGER NOT NULL,
-  price_ngn NUMERIC NOT NULL,
+  price_xaf NUMERIC NOT NULL,
   price_usd NUMERIC DEFAULT 0,
   is_active BOOLEAN DEFAULT TRUE,
   sort_order INTEGER NOT NULL DEFAULT 0,
@@ -117,6 +117,8 @@ CREATE TABLE IF NOT EXISTS public.crypto_payments (
   credits INTEGER NOT NULL, 
   crypto_currency TEXT NOT NULL DEFAULT 'USDT',
   status TEXT NOT NULL DEFAULT 'pending' CHECK (status IN ('pending', 'completed', 'failed')),
+  reference TEXT,
+  provider_status TEXT,
   created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
   confirmed_at TIMESTAMP WITH TIME ZONE,
   confirmed_by UUID REFERENCES public.users(id) ON DELETE SET NULL
@@ -141,6 +143,7 @@ CREATE INDEX IF NOT EXISTS idx_transactions_created_at ON public.transactions(cr
 CREATE INDEX IF NOT EXISTS idx_sessions_user_id ON public.sessions(user_id);
 CREATE INDEX IF NOT EXISTS idx_sessions_status ON public.sessions(status);
 CREATE INDEX IF NOT EXISTS idx_sessions_start_time ON public.sessions(start_time DESC);
+CREATE INDEX IF NOT EXISTS idx_crypto_payments_reference ON public.crypto_payments(reference);
 
 -- ============================================
 -- ROW LEVEL SECURITY
@@ -342,8 +345,8 @@ $$ LANGUAGE plpgsql SECURITY DEFINER;
 -- ============================================
 -- SEED DATA: Default Packages
 -- ============================================
-INSERT INTO public.credit_packages (name, credits, price_ngn, price_usd) VALUES
-  ('Starter', 500, 14000, 10.00),
-  ('Basic', 1000, 28000, 20.00),
-  ('Pro', 2000, 56000, 40.00),
-  ('Enterprise', 5000, 140000, 100.00);
+INSERT INTO public.credit_packages (name, credits, price_xaf, price_usd) VALUES
+  ('Starter', 9400, 8000, 14.00),
+  ('Basic', 21800, 14000, 24.50),
+  ('Pro', 44400, 25000, 43.75),
+  ('Enterprise', 281200, 140000, 245.00);

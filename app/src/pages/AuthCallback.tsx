@@ -1,120 +1,59 @@
-import { useEffect, useRef, useState } from 'react';
-import { AlertCircle, Loader2 } from 'lucide-react';
-import { Button } from '@/components/ui/button';
-import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
-import { GOOGLE_AUTH_MESSAGE_TYPE, buildHashRouteUrl, normalizeRedirectPath } from '@/lib/auth';
+import { useEffect, useState } from 'react';
+import { CheckCircle, Loader2, XCircle } from 'lucide-react';
+import { useNavigate, useSearchParams } from 'react-router-dom';
+
+import { TextureButton } from '@/components/ui/texture-button';
 import { ROUTES } from '@/lib/routes';
 import { supabase } from '@/lib/supabase';
-import { useLocation } from 'react-router-dom';
+
+type CallbackState = 'loading' | 'success' | 'error';
 
 function AuthCallback() {
-  const location = useLocation();
-  const hasHandledCallbackRef = useRef(false);
-  const [errorMessage, setErrorMessage] = useState<string | null>(null);
+  const [searchParams] = useSearchParams();
+  const navigate = useNavigate();
+  const code = searchParams.get('code');
+  const providerError = searchParams.get('error_description') || searchParams.get('error');
+  const invalidMessage = providerError || (!code ? 'This confirmation link is invalid or has expired.' : '');
+  const [state, setState] = useState<CallbackState>(invalidMessage ? 'error' : 'loading');
+  const [message, setMessage] = useState(invalidMessage || 'Confirming your email...');
 
   useEffect(() => {
-    if (hasHandledCallbackRef.current) {
-      return;
-    }
+    if (!code || providerError) return;
 
-    hasHandledCallbackRef.current = true;
-
-    const routeParams = new URLSearchParams(location.search);
-    const rootParams = new URLSearchParams(window.location.search);
-    const nextPath = normalizeRedirectPath(routeParams.get('next'));
-    const isPopup = routeParams.get('auth') === 'popup' && Boolean(window.opener) && !window.opener.closed;
-    const oauthError = rootParams.get('error_description') || rootParams.get('error');
-
-    const redirectTo = (path: string) => {
-      window.location.replace(buildHashRouteUrl(path));
-    };
-
-    const finishPopupFlow = () => {
-      if (!isPopup || !window.opener || window.opener.closed) {
-        redirectTo(nextPath);
-        return;
-      }
-
-      window.opener.postMessage({ type: GOOGLE_AUTH_MESSAGE_TYPE, next: nextPath }, window.location.origin);
-      window.setTimeout(() => {
-        window.close();
-      }, 150);
-    };
-
-    const completeCallback = async () => {
-      if (oauthError) {
-        setErrorMessage(oauthError);
-        return;
-      }
-
-      const code = rootParams.get('code');
-      if (!code) {
-        const { data: { session } } = await supabase.auth.getSession();
-
-        if (session) {
-          if (isPopup) {
-            finishPopupFlow();
-          } else {
-            redirectTo(nextPath);
-          }
-          return;
-        }
-
-        setErrorMessage('Missing Google OAuth code in the callback URL.');
-        return;
-      }
-
-      const { error } = await supabase.auth.exchangeCodeForSession(code);
+    let active = true;
+    void supabase.auth.exchangeCodeForSession(code).then(({ error }) => {
+      if (!active) return;
       if (error) {
-        setErrorMessage(error.message || 'Failed to complete Google sign-in.');
+        setState('error');
+        setMessage(error.message);
         return;
       }
 
-      if (isPopup) {
-        finishPopupFlow();
-        return;
-      }
+      setState('success');
+      setMessage('Your email is confirmed. Henshin is ready.');
+      window.setTimeout(() => navigate(ROUTES.DEFAULT, { replace: true }), 800);
+    });
 
-      redirectTo(nextPath);
+    return () => {
+      active = false;
     };
-
-    void completeCallback();
-  }, [location.search]);
+  }, [code, navigate, providerError]);
 
   return (
-    <div className="min-h-screen bg-[#0f0f10] flex items-center justify-center p-4">
-      <Card className="w-full max-w-md bg-[#18181b] border-[#27272a]">
-        <CardHeader className="pb-3">
-          <CardTitle className="text-xl font-semibold text-white text-center">
-            {errorMessage ? 'Sign-in failed' : 'Completing sign-in'}
-          </CardTitle>
-        </CardHeader>
-        <CardContent className="flex flex-col items-center text-center gap-4">
-          {errorMessage ? (
-            <>
-              <div className="w-12 h-12 rounded-full bg-red-500/10 flex items-center justify-center">
-                <AlertCircle className="w-6 h-6 text-red-400" />
-              </div>
-              <p className="text-sm text-[#d4d4d8]">{errorMessage}</p>
-              <Button
-                type="button"
-                onClick={() => window.location.replace(buildHashRouteUrl(ROUTES.PUBLIC.LOGIN))}
-                className="w-full bg-[#2563eb] hover:bg-[#1d4ed8] text-white"
-              >
-                Return to login
-              </Button>
-            </>
-          ) : (
-            <>
-              <Loader2 className="w-8 h-8 animate-spin text-blue-400" />
-              <p className="text-sm text-[#a1a1aa]">
-                We&apos;re exchanging your Google session with Supabase and sending you to your dashboard.
-              </p>
-            </>
-          )}
-        </CardContent>
-      </Card>
-    </div>
+    <main className="flex min-h-screen items-center justify-center bg-background p-6">
+      <section className="w-full max-w-md rounded-2xl border border-blue-500/20 bg-panel p-8 text-center shadow-2xl">
+        {state === 'loading' && <Loader2 className="mx-auto size-12 animate-spin text-blue-400" />}
+        {state === 'success' && <CheckCircle className="mx-auto size-12 text-blue-400" />}
+        {state === 'error' && <XCircle className="mx-auto size-12 text-red-400" />}
+        <h1 className="mt-5 text-2xl font-semibold text-foreground">Email confirmation</h1>
+        <p className="mt-3 text-sm text-muted-foreground">{message}</p>
+        {state === 'error' && (
+          <TextureButton className="mt-6 w-full" size="lg" onClick={() => navigate(ROUTES.PUBLIC.LOGIN)}>
+            Return to sign in
+          </TextureButton>
+        )}
+      </section>
+    </main>
   );
 }
 

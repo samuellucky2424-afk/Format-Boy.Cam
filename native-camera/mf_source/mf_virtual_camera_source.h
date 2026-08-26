@@ -11,7 +11,7 @@
 #include <thread>
 #include <vector>
 #include <cstdint>
-#include "../formatboy_ids.h"
+#include "../henshin_ids.h"
 
 using Microsoft::WRL::ComPtr;
 
@@ -37,15 +37,15 @@ struct __declspec(uuid("28F54685-06FD-11D2-B27A-00A0C9223196")) IKsControl : pub
 };
 
 // Forward declaration
-class FormatBoyMFStream;
+class HenshinMFStream;
 
 // ============================================================================
-// FormatBoyMFSource
+// HenshinMFSource
 // Implements IMFMediaSourceEx + IMFGetService.
 // Reads BGRA frames from the file bridge, converts to NV12, and delivers
-// them to FormatBoyMFStream at 30 fps.
+// them to HenshinMFStream at 30 fps.
 // ============================================================================
-class FormatBoyMFSource
+class HenshinMFSource
     : public IMFMediaSourceEx   // extends IMFMediaSource — required by FrameServer
     , public IMFGetService
     , public IKsControl
@@ -94,12 +94,12 @@ public:
                        LPVOID EventData, ULONG DataLength,
                        ULONG* BytesReturned) override;
 
-    // Called by FormatBoyMFStream
+    // Called by HenshinMFStream
     void DeliverBridgeFrame();
 
 private:
-    FormatBoyMFSource();
-    ~FormatBoyMFSource();
+    HenshinMFSource();
+    ~HenshinMFSource();
 
     HRESULT Initialize();
     HRESULT InitializeAttributeStores();
@@ -114,7 +114,7 @@ private:
     ComPtr<IMFAttributes>             m_sourceAttributes;
     ComPtr<IMFAttributes>             m_streamAttributes;
     ComPtr<IUnknown>                  m_d3dManager;
-    FormatBoyMFStream*                m_pStream = nullptr;
+    HenshinMFStream*                m_pStream = nullptr;
 
     // File bridge
     HANDLE   m_hFile    = INVALID_HANDLE_VALUE;
@@ -134,15 +134,15 @@ private:
 };
 
 // ============================================================================
-// FormatBoyMFStream
+// HenshinMFStream
 // Implements IMFMediaStream.
-// Receives NV12 samples from FormatBoyMFSource and queues MEMediaSample events.
+// Receives NV12 samples from HenshinMFSource and queues MEMediaSample events.
 // ============================================================================
-class FormatBoyMFStream : public IMFMediaStream
+class HenshinMFStream : public IMFMediaStream
 {
 public:
-    explicit FormatBoyMFStream(FormatBoyMFSource* pSource);
-    ~FormatBoyMFStream();
+    explicit HenshinMFStream(HenshinMFSource* pSource);
+    ~HenshinMFStream();
 
     HRESULT Initialize(uint32_t width, uint32_t height,
                        uint32_t fpsNum, uint32_t fpsDen);
@@ -179,7 +179,7 @@ public:
 private:
     std::atomic<ULONG> m_ref{1};
 
-    FormatBoyMFSource*          m_pSource = nullptr;
+    HenshinMFSource*          m_pSource = nullptr;
     ComPtr<IMFMediaEventQueue>  m_eventQueue;
     ComPtr<IMFStreamDescriptor> m_streamDesc;
 

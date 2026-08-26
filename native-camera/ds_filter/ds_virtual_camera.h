@@ -1,5 +1,5 @@
 #pragma once
-// DirectShow Virtual Camera Filter — Format-Boy CAM (Windows 10 / OBS support)
+// DirectShow Virtual Camera Filter — Henshin (Windows 10 / OBS support)
 // Reads from the same file bridge as the MF source.
 // Output pin provides YUY2 @ 1280×720 @ 30fps.
 
@@ -7,6 +7,9 @@
 #define NOMINMAX
 #include <windows.h>
 #include <dshow.h>
+#include <ks.h>
+#include <ksmedia.h>
+#include <ksproxy.h>
 #include <atomic>
 #include <thread>
 #include <cstdint>
@@ -14,17 +17,21 @@
 #pragma comment(lib, "strmiids.lib")
 
 // ============================================================================
-// CFormatBoyOutputPin
+// CHenshinOutputPin
 // Push-source output pin.  Runs a thread that reads the file bridge,
 // converts BGRA→YUY2, and calls IMemInputPin::Receive on the downstream pin.
 // ============================================================================
-class CFormatBoyDSFilter;
+class CHenshinDSFilter;
 
-class CFormatBoyOutputPin : public IPin, public IQualityControl
+class CHenshinOutputPin
+    : public IPin
+    , public IQualityControl
+    , public IAMStreamConfig
+    , public IKsPropertySet
 {
 public:
-    explicit CFormatBoyOutputPin(CFormatBoyDSFilter* pFilter);
-    ~CFormatBoyOutputPin();
+    explicit CHenshinOutputPin(CHenshinDSFilter* pFilter);
+    ~CHenshinOutputPin();
 
     // IUnknown
     STDMETHOD(QueryInterface)(REFIID riid, void** ppv) override;
@@ -53,6 +60,23 @@ public:
     STDMETHOD(Notify)(IBaseFilter* pSelf, Quality q) override { return S_OK; }
     STDMETHOD(SetSink)(IQualityControl* piqc) override { return S_OK; }
 
+    // IAMStreamConfig
+    STDMETHOD(SetFormat)(AM_MEDIA_TYPE* pmt) override;
+    STDMETHOD(GetFormat)(AM_MEDIA_TYPE** ppmt) override;
+    STDMETHOD(GetNumberOfCapabilities)(int* piCount, int* piSize) override;
+    STDMETHOD(GetStreamCaps)(int iIndex, AM_MEDIA_TYPE** ppmt, BYTE* pSCC) override;
+
+    // IKsPropertySet
+    STDMETHOD(Set)(REFGUID guidPropSet, DWORD dwID,
+                   LPVOID pInstanceData, DWORD cbInstanceData,
+                   LPVOID pPropData, DWORD cbPropData) override;
+    STDMETHOD(Get)(REFGUID guidPropSet, DWORD dwPropID,
+                   LPVOID pInstanceData, DWORD cbInstanceData,
+                   LPVOID pPropData, DWORD cbPropData,
+                   DWORD* pcbReturned) override;
+    STDMETHOD(QuerySupported)(REFGUID guidPropSet, DWORD dwPropID,
+                              DWORD* pTypeSupport) override;
+
     // Called by filter
     HRESULT Active();
     HRESULT Inactive();
@@ -63,15 +87,16 @@ private:
                             uint8_t* yuy2);
     bool FillMediaType(AM_MEDIA_TYPE* pmt) const;
     HRESULT TryOpenBridge();
+    void CloseBridge();
 
-    std::atomic<ULONG> m_ref{1};
-    CFormatBoyDSFilter* m_pFilter = nullptr;
+    CHenshinDSFilter* m_pFilter = nullptr;
     IPin*               m_pConnected = nullptr;  // downstream pin
     IMemInputPin*       m_pMemInput  = nullptr;
     IMemAllocator*      m_pAlloc     = nullptr;
 
     std::thread       m_thread;
     std::atomic<bool> m_running{false};
+    std::atomic<bool> m_resetTimeline{true};
 
     // File bridge
     HANDLE   m_hFile  = INVALID_HANDLE_VALUE;
@@ -82,10 +107,10 @@ private:
 };
 
 // ============================================================================
-// CFormatBoyDSFilter
+// CHenshinDSFilter
 // Minimal IBaseFilter implementation for a video capture source.
 // ============================================================================
-class CFormatBoyDSFilter
+class CHenshinDSFilter
     : public IBaseFilter
     , public IAMFilterMiscFlags
 {
@@ -121,12 +146,12 @@ public:
     IFilterGraph*  m_pGraph = nullptr;
 
 private:
-    CFormatBoyDSFilter();
-    ~CFormatBoyDSFilter();
+    CHenshinDSFilter();
+    ~CHenshinDSFilter();
 
     std::atomic<ULONG>  m_ref{1};
     FILTER_STATE        m_state = State_Stopped;
-    CFormatBoyOutputPin m_pin;
+    CHenshinOutputPin m_pin;
     wchar_t             m_name[128] = {};
     CRITICAL_SECTION    m_cs;
 };

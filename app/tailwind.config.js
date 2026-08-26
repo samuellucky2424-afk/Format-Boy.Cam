@@ -4,7 +4,33 @@ module.exports = {
   content: ['./index.html', './src/**/*.{js,ts,jsx,tsx}'],
   theme: {
     extend: {
+      fontFamily: {
+        sans: ['Geist Variable', 'Segoe UI', 'sans-serif'],
+      },
       colors: {
+        /* Ramps gris/bleu du langage ORYA, adaptés dark-first (aucun jaune) */
+        gray: {
+          40: "#f8f9fb",
+          50: "#f4f6f8",
+          100: "#e8eaed",
+          200: "#cfd3d8",
+          300: "#a8aeb6",
+          400: "#7d848e",
+          500: "#5f6670",
+          600: "#50565e",
+          700: "#43484f",
+          800: "#3a3e44",
+          900: "#32363b",
+          1000: "#1a1d23",
+          950: "#14161b",
+        },
+        blue: {
+          300: "#7ba3ff",
+          400: "#4f88ff",
+          500: "#1f55f1",
+          600: "#1848d4",
+          700: "#163eb5",
+        },
         border: "hsl(var(--border))",
         input: "hsl(var(--input))",
         ring: "hsl(var(--ring))",
@@ -13,6 +39,7 @@ module.exports = {
         primary: {
           DEFAULT: "hsl(var(--primary))",
           foreground: "hsl(var(--primary-foreground))",
+          hover: "hsl(var(--primary-hover))",
         },
         secondary: {
           DEFAULT: "hsl(var(--secondary))",
@@ -38,6 +65,9 @@ module.exports = {
           DEFAULT: "hsl(var(--card))",
           foreground: "hsl(var(--card-foreground))",
         },
+        panel: {
+          DEFAULT: "hsl(var(--panel))",
+        },
         sidebar: {
           DEFAULT: "hsl(var(--sidebar-background))",
           foreground: "hsl(var(--sidebar-foreground))",
@@ -58,6 +88,7 @@ module.exports = {
       },
       boxShadow: {
         xs: "0 1px 2px 0 rgb(0 0 0 / 0.05)",
+        surface: "var(--shadow-surface)",
       },
       keyframes: {
         "accordion-down": {

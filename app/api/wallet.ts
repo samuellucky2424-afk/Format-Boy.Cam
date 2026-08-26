@@ -1,65 +1,79 @@
 // @ts-nocheck
-import { supabaseAdmin, supabaseAdminConfigError } from './supabase.js';
-import { getWalletByUserId } from './credit-utils.js';
-import cryptoSubmitHandler from '../server/crypto-submit.js';
-import paymentMethodsHandler from '../server/payment-methods.js';
+import { requireAuthorizedUser, sendApiError } from './auth.js';
+import { getWalletByUserId } from '../server/credit-utils.js';
+import { supabaseAdmin } from './supabase.js';
+import fapshiInitHandler from '../server/fapshi-init.js';
+import fapshiReturnHandler from '../server/fapshi-return.js';
+import fapshiStatusHandler from '../server/fapshi-status.js';
+import fapshiWebhookHandler from '../server/fapshi-webhook.js';
 
 export default async function handler(req, res) {
-  if (req.query?.action === 'crypto-submit') {
-    return cryptoSubmitHandler(req, res);
-  }
-  if (req.query?.action === 'payment-methods') {
-    return paymentMethodsHandler(req, res);
-  }
+  if (req.query?.action === 'fapshi-init') return fapshiInitHandler(req, res);
+  if (req.query?.action === 'fapshi-return') return fapshiReturnHandler(req, res);
+  if (req.query?.action === 'fapshi-status') return fapshiStatusHandler(req, res);
+  if (req.query?.action === 'fapshi-webhook') return fapshiWebhookHandler(req, res);
 
-  res.setHeader("Access-Control-Allow-Origin", "*");
-  res.setHeader("Access-Control-Allow-Methods", "GET, OPTIONS");
-  res.setHeader("Access-Control-Allow-Headers", "Content-Type, Authorization");
-  
+  res.setHeader('Access-Control-Allow-Origin', '*');
+  res.setHeader('Access-Control-Allow-Methods', 'GET, OPTIONS');
+  res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization');
+  res.setHeader('Cache-Control', 'private, no-store');
+
   if (req.method === 'OPTIONS') return res.status(200).end();
-  
-  const userId = req.query.userId || req.query.id;
-  if (!userId) return res.status(400).json({ error: 'User ID is required' });
+  if (req.method !== 'GET') return res.status(405).json({ error: 'Method not allowed' });
 
-  if (!supabaseAdmin) {
-    return res.status(503).json({ error: supabaseAdminConfigError });
-  }
-
+  const userId = String(req.query?.userId || '').trim();
   try {
-    const { data: txs, error: txsError } = await supabaseAdmin
-      .from('transactions')
-      .select('*')
-      .eq('user_id', userId)
-      .order('created_at', { ascending: false })
-      .limit(50);
+    await requireAuthorizedUser(req, userId);
 
-    if (txsError) {
-      console.error('Failed to load transactions:', txsError);
-      return res.status(500).json({ error: 'Failed to fetch credits' });
-    }
+    const [wallet, transactionsResult, sessionsResult] = await Promise.all([
+      getWalletByUserId(userId, { createIfMissing: true }),
+      supabaseAdmin
+        .from('transactions')
+        .select('id, type, amount, credits, description, status, provider, reference, session_id, created_at')
+        .eq('user_id', userId)
+        .order('created_at', { ascending: false })
+        .limit(50),
+      supabaseAdmin
+        .from('sessions')
+        .select('id, provider, provider_session_id, start_time, end_time, seconds_used, credits_per_second, credits_used, status, end_reason, model')
+        .eq('user_id', userId)
+        .order('start_time', { ascending: false })
+        .limit(50),
+    ]);
 
-    const creditAccount = await getWalletByUserId(userId, { createIfMissing: true });
-    if (!creditAccount) {
-      return res.status(404).json({ error: 'Wallet not found' });
-    }
+    if (transactionsResult.error) throw transactionsResult.error;
+    if (sessionsResult.error) throw sessionsResult.error;
 
-    // Map DB columns to our frontend transaction structure
-    const mappedTxs = (txs || []).map(tx => ({
-      id: tx.id,
-      type: tx.type,
-      amount: 0,
-      credits: typeof tx.credits === 'number' && Number.isFinite(tx.credits) ? tx.credits : undefined,
-      description: tx.description || (tx.type === 'credit' ? 'Credits purchased' : 'Session usage'),
-      timestamp: tx.created_at,
-    }));
-
-    res.json({
-      credits: creditAccount.credits,
-      remainingSeconds: Math.floor(creditAccount.credits / 2),
-      transactions: mappedTxs
+    return res.json({
+      credits: wallet.credits,
+      remainingSeconds: Math.floor(wallet.credits / 2),
+      fastRemainingSeconds: Math.floor(wallet.credits / 2),
+      transactions: (transactionsResult.data || []).map((transaction) => ({
+        id: transaction.id,
+        type: transaction.type,
+        amount: Number(transaction.amount || 0),
+        credits: Number(transaction.credits || 0),
+        description: transaction.description,
+        status: transaction.status,
+        provider: transaction.provider,
+        reference: transaction.reference,
+        sessionId: transaction.session_id,
+        timestamp: transaction.created_at,
+      })),
+      sessions: (sessionsResult.data || []).map((session) => ({
+        id: session.id,
+        provider: session.provider,
+        providerSessionId: session.provider_session_id,
+        date: session.start_time,
+        duration: Number(session.seconds_used || 0),
+        rate: Number(session.credits_per_second || 0),
+        credits: Number(session.credits_used || 0),
+        status: session.status,
+        reason: session.end_reason,
+        model: session.model,
+      })),
     });
   } catch (error) {
-    console.error('Credits handler error:', error);
-    res.status(500).json({ error: 'Failed to fetch credits' });
+    return sendApiError(res, error, 'Failed to fetch wallet');
   }
 }

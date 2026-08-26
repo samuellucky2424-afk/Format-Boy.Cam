@@ -7,12 +7,12 @@ import { inspectAttr } from 'kimi-plugin-inspect-react'
 export default defineConfig(({ mode }) => {
   const env = loadEnv(mode, __dirname, '');
   const apiProxyTarget = (
-    process.env.FORMAT_BOY_LOCAL_API_TARGET ||
+    process.env.HENSHIN_LOCAL_API_TARGET ||
     env.VITE_API_BASE_URL ||
     ''
   ).replace(/\/api\/?$/i, '');
-  const localSupabaseUrl = process.env.FORMAT_BOY_LOCAL_SUPABASE_URL?.trim();
-  const localSupabaseAnonKey = process.env.FORMAT_BOY_LOCAL_SUPABASE_ANON_KEY?.trim();
+  const localSupabaseUrl = process.env.HENSHIN_LOCAL_SUPABASE_URL?.trim();
+  const localSupabaseAnonKey = process.env.HENSHIN_LOCAL_SUPABASE_ANON_KEY?.trim();
 
   return {
     base: './',
@@ -21,8 +21,8 @@ export default defineConfig(({ mode }) => {
     // serialized into the browser environment.
     envPrefix: [
       'VITE_API_BASE_URL',
-      'VITE_PAYSTACK_PUBLIC_KEY',
       'VITE_SUPABASE_',
+      'VITE_REACTOR_',
     ],
     define: {
       ...(localSupabaseUrl

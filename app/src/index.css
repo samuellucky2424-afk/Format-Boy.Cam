@@ -2,41 +2,86 @@
 @tailwind components;
 @tailwind utilities;
 
+/*
+  Henshin 変身 : chrome sombre sans cadres, hiérarchisé par la typographie
+  et une seule famille d'accents bleus.
+*/
+
 @layer base {
   :root {
-    --background: 0 0% 6%;
-    --foreground: 0 0% 98%;
-    --card: 0 0% 9%;
-    --card-foreground: 0 0% 98%;
-    --popover: 0 0% 9%;
-    --popover-foreground: 0 0% 98%;
-    --primary: 217 91% 60%;
+    /* Surfaces */
+    --background: 222 21% 8%;         /* #101218 */
+    --foreground: 220 18% 93%;        /* #e8eaf0 */
+    --card: 222 24% 10%;
+    --card-foreground: 220 18% 93%;
+    --popover: 220 17% 13%;           /* #1b1e27 */
+    --popover-foreground: 220 18% 93%;
+    --canvas: 222 21% 8%;
+
+    /* Primaire bleu */
+    --primary: 218 100% 69%;          /* #6197ff */
+    --primary-hover: 214 100% 75%;    /* #80adff */
     --primary-foreground: 0 0% 100%;
-    --secondary: 0 0% 14%;
-    --secondary-foreground: 0 0% 98%;
-    --muted: 0 0% 15%;
-    --muted-foreground: 0 0% 60%;
-    --accent: 217 91% 60%;
-    --accent-foreground: 0 0% 100%;
+
+    /* Neutres */
+    --secondary: 220 14% 15%;
+    --secondary-foreground: 220 18% 93%;
+    --muted: 220 14% 15%;
+    --muted-foreground: 218 10% 62%;  /* #9299a8 */
+    --accent: 219 14% 18%;
+    --accent-foreground: 220 18% 93%;
+
+    /* États */
     --destructive: 0 84% 60%;
     --destructive-foreground: 0 0% 98%;
-    --border: 0 0% 16%;
-    --input: 0 0% 14%;
-    --ring: 217 91% 60%;
-    --radius: 0.5rem;
+
+    /* Bordures & focus */
+    --border: 219 42% 22%;
+    --input: 219 38% 25%;
+    --ring: 218 100% 69%;
+
+    /* Charts — déclinaisons bleues/cyan exclusivement */
+    --chart-1: 221 100% 65%;          /* #4f88ff */
+    --chart-2: 187 92% 50%;           /* #22d3ee */
+    --chart-3: 245 74% 69%;           /* #7d73eb */
+    --chart-4: 199 89% 60%;           /* #38bdf8 */
+    --chart-5: 185 82% 71%;           /* #67e8f9 */
+
+    /* Sidebar */
+    --sidebar-background: 222 21% 8%;
+    --sidebar-foreground: 218 10% 62%;
+    --sidebar-primary: 218 100% 69%;
+    --sidebar-primary-foreground: 0 0% 100%;
+    --sidebar-accent: 219 14% 18%;
+    --sidebar-accent-foreground: 220 18% 93%;
+    --sidebar-border: 219 42% 22%;
+    --sidebar-ring: 218 100% 69%;
+
+    --radius: 12px;
+    --sidebar-width: 250px;
+    --header-height: 48px;
+
+    /* Panneau encastré (KPI, états vides) — entre canvas et card */
+    --panel: 220 17% 13%;
+
+    /* Ombre de surface adaptée au fond sombre */
+    --shadow-surface: none;
   }
 }
 
 @layer base {
   * {
     @apply border-border;
+    outline-color: hsl(var(--ring) / 0.5);
   }
   html {
     @apply antialiased;
+    font-family: 'Geist Variable', 'Segoe UI', sans-serif;
+    font-synthesis: none;
   }
   body {
     @apply bg-background text-foreground;
-    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
+    font-family: inherit;
   }
 }
 
@@ -44,20 +89,294 @@
   .transition-smooth {
     transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
   }
-  
-  .shadow-premium {
-    box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.3), 0 2px 4px -2px rgba(0, 0, 0, 0.2), 0 0 0 1px rgba(255, 255, 255, 0.05);
+
+  @keyframes cosmic-spin {
+    from { transform: rotate(0deg); }
+    to { transform: rotate(360deg); }
   }
-  
+
+  @keyframes cosmic-spin-slow {
+    from { transform: rotate(0deg); }
+    to { transform: rotate(-360deg); }
+  }
+
+  .animate-cosmic-spin {
+    animation: cosmic-spin 3s linear infinite;
+  }
+
+  .animate-cosmic-spin-slow {
+    animation: cosmic-spin-slow 5s linear infinite;
+  }
+
+  .shadow-premium {
+    box-shadow: none;
+  }
+
   .shadow-card {
-    box-shadow: 0 10px 40px -10px rgba(0, 0, 0, 0.4), 0 0 0 1px rgba(255, 255, 255, 0.05);
+    box-shadow: none;
   }
 
   .app-region-drag {
     -webkit-app-region: drag;
   }
-  
+
   .app-region-no-drag {
     -webkit-app-region: no-drag;
+  }
+
+  /* ===== Utilitaires façon ORYA, adaptés dark + bleu ===== */
+
+  /* Surface structurelle intégrée au canvas, sans effet de boîte. */
+  .surface-card {
+    border: 1px solid hsl(var(--border) / 0.72);
+    background-color: hsl(var(--card));
+    color: hsl(var(--card-foreground));
+    border-radius: 16px;
+    box-shadow: none;
+  }
+
+  /* Item de navigation dense (sidebar / header compact) */
+  .nav-item {
+    display: flex;
+    align-items: center;
+    gap: 0.625rem;
+    border-radius: 8px;
+    padding: 0.5rem 0.625rem;
+    font-size: 0.875rem;
+    line-height: 1.4;
+    font-weight: 500;
+    color: hsl(var(--sidebar-foreground));
+    transition: color 150ms ease;
+  }
+
+  .nav-item:hover {
+    color: hsl(var(--foreground));
+  }
+
+  /* Actif : lien NavLink courant ou marqueur explicite */
+  .nav-item[aria-current='page'],
+  .nav-item[data-active='true'] {
+    color: hsl(var(--primary));
+  }
+
+  .nav-item[aria-current='page']:hover,
+  .nav-item[data-active='true']:hover {
+    color: hsl(var(--primary-hover));
+  }
+
+  .nav-item:focus-visible {
+    outline: 2px solid hsl(var(--ring));
+    outline-offset: 2px;
+  }
+
+  .sidebar-shell {
+    border: 0;
+    background: transparent;
+    box-shadow: none;
+  }
+
+  .side-item {
+    position: relative;
+    display: flex;
+    align-items: center;
+    gap: 0;
+    width: 100%;
+    height: 2.25rem;
+    padding: 0 4px;
+    border-radius: 8px;
+    font-size: 13px;
+    font-weight: 500;
+    letter-spacing: -0.01em;
+    color: hsl(var(--sidebar-foreground));
+    text-align: left;
+    transition: color 140ms ease;
+  }
+
+  .side-icon-slot {
+    display: grid;
+    place-items: center;
+    width: 32px;
+    height: 32px;
+    flex-shrink: 0;
+  }
+
+  .side-item:hover {
+    color: hsl(var(--foreground));
+  }
+
+  .side-item:focus-visible {
+    outline: 2px solid hsl(var(--ring));
+    outline-offset: -2px;
+  }
+
+  .side-icon {
+    height: 18px;
+    width: 18px;
+    flex-shrink: 0;
+  }
+
+  .side-item[aria-current='page'] {
+    color: hsl(var(--primary));
+  }
+
+  .side-user-row:hover {
+    background-color: transparent;
+  }
+
+  .side-tooltip {
+    position: absolute;
+    top: 50%;
+    left: calc(100% + 10px);
+    z-index: 80;
+    pointer-events: none;
+    visibility: hidden;
+    white-space: nowrap;
+    border: 0;
+    border-radius: 7px;
+    background-color: hsl(var(--popover) / 0.96);
+    color: hsl(var(--popover-foreground));
+    box-shadow: none;
+    padding: 5px 8px;
+    font-size: 12px;
+    font-weight: 500;
+    letter-spacing: -0.01em;
+    opacity: 0;
+    transform: translate(-4px, -50%);
+    backdrop-filter: blur(12px);
+    transition:
+      opacity 120ms ease,
+      transform 160ms ease-out,
+      visibility 0s linear 160ms;
+  }
+
+  .side-item:hover .side-tooltip,
+  .side-item:focus-visible .side-tooltip {
+    visibility: visible;
+    opacity: 1;
+    transform: translate(0, -50%);
+    transition-delay: 100ms;
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    .side-tooltip {
+      transform: translate(0, -50%);
+      transition: none;
+    }
+  }
+
+  .pricing-card-glow {
+    position: absolute;
+    inset: -1px;
+    pointer-events: none;
+    background:
+      radial-gradient(70% 45% at 50% 0%, hsl(var(--primary) / 0.22), transparent 72%),
+      radial-gradient(55% 35% at 100% 100%, hsl(var(--primary) / 0.1), transparent 75%);
+  }
+
+  /* KPI : label discret, valeur large serrée */
+  .kpi-card {
+    display: flex;
+    flex-direction: column;
+    justify-content: space-between;
+    gap: 0.75rem;
+    border-radius: 16px;
+    background-color: hsl(var(--panel));
+    padding: 1.25rem;
+  }
+
+  .kpi-label {
+    font-size: 0.75rem;
+    font-weight: 600;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    color: hsl(var(--muted-foreground));
+  }
+
+  .kpi-value {
+    font-weight: 700;
+    letter-spacing: -0.02em;
+    line-height: 1.15;
+    color: hsl(var(--foreground));
+  }
+
+  /* État vide / bloc encastré */
+  .empty-panel {
+    border-radius: 16px;
+    background-color: hsl(var(--panel));
+    padding: 1.5rem 1.25rem;
+  }
+
+  /* Titre de page resserré */
+  .title-tight {
+    letter-spacing: -0.02em;
+    font-weight: 700;
+    color: hsl(var(--foreground));
+  }
+
+  /* Fond mesh sombre + halos bleus (login, pages publiques) */
+  .mesh-bg {
+    background-color: #1a1d23;
+    background-image:
+      radial-gradient(at 12% 18%, rgba(123, 163, 255, 0.18), transparent 42%),
+      radial-gradient(at 88% 8%, rgba(22, 62, 181, 0.4), transparent 40%),
+      radial-gradient(at 48% 92%, rgba(50, 54, 59, 0.9), transparent 42%);
+  }
+
+  /* Halo radial bleu centré derrière une carte (auth) */
+  .glow-center {
+    background-image:
+      radial-gradient(60% 45% at 50% 38%, rgba(79, 136, 255, 0.14), transparent 70%),
+      radial-gradient(90% 60% at 50% 110%, rgba(24, 72, 212, 0.22), transparent 65%);
+  }
+
+  /* Scrollbar discrète */
+  .custom-scrollbar {
+    scrollbar-width: thin;
+    scrollbar-color: hsl(var(--border)) transparent;
+  }
+
+  .custom-scrollbar::-webkit-scrollbar {
+    width: 6px;
+    height: 6px;
+  }
+
+  .custom-scrollbar::-webkit-scrollbar-thumb {
+    background-color: hsl(var(--border));
+    border-radius: 9999px;
+  }
+
+  .custom-scrollbar::-webkit-scrollbar-track {
+    background: transparent;
+  }
+
+  /* Animation d'entrée discrète */
+  @keyframes fade-in-up {
+    from {
+      opacity: 0;
+      transform: translateY(16px);
+    }
+    to {
+      opacity: 1;
+      transform: translateY(0);
+    }
+  }
+
+  .fade-in-up {
+    animation: fade-in-up 0.5s ease both;
+  }
+
+  .delay-100 { animation-delay: 100ms; }
+  .delay-200 { animation-delay: 200ms; }
+  .delay-300 { animation-delay: 300ms; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .animate-cosmic-spin,
+  .animate-cosmic-spin-slow {
+    animation-play-state: paused;
+  }
+
+  .fade-in-up {
+    animation: none;
   }
 }

@@ -1,7 +1,7 @@
 import React, { createContext, useContext, useState, useEffect, useCallback, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { ROUTES } from '@/lib/routes';
-import { buildElectronCallbackUrl, buildGoogleCallbackPath, buildHashRouteUrl, normalizeRedirectPath } from '@/lib/auth';
+import { buildAuthCallbackUrl } from '@/lib/auth';
 import { supabase } from '@/lib/supabase';
 import type { Session, User as SupabaseUser } from '@supabase/supabase-js';
 
@@ -28,18 +28,19 @@ interface AuthContextType {
   user: User | null;
   isAuthenticated: boolean;
   login: (email: string, password: string) => Promise<void>;
+  loginWithGoogle: () => Promise<void>;
   logout: () => void;
-  register: (email: string, name: string, password: string) => Promise<void>;
-  signInWithGoogle: (redirectPath?: string) => Promise<void>;
+  register: (email: string, name: string, password: string) => Promise<RegistrationResult>;
   loading: boolean;
   error: string | null;
   clearError: () => void;
 }
 
+interface RegistrationResult {
+  requiresEmailConfirmation: boolean;
+}
+
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
-const GOOGLE_AUTH_POPUP_NAME = 'format-boy-google-auth';
-const GOOGLE_AUTH_POPUP_WIDTH = 520;
-const GOOGLE_AUTH_POPUP_HEIGHT = 720;
 const AUTH_REQUEST_TIMEOUT_MS = 20_000;
 const PROFILE_REQUEST_TIMEOUT_MS = 12_000;
 
@@ -53,64 +54,6 @@ function withTimeout<T>(promise: PromiseLike<T>, timeoutMs: number, message: str
 }
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
-
-/** Detect if running inside Electron */
-function isElectron(): boolean {
-  if (typeof window === 'undefined') return false;
-
-  return Boolean(
-    (window as any).process?.versions?.electron ||
-    navigator.userAgent.includes('Electron')
-  );
-}
-
-function parseOAuthCallbackUrl(url: string): URL | null {
-  try {
-    return new URL(url);
-  } catch {
-    try {
-      return new URL(url.replace('formatboy://', 'https://localhost/'));
-    } catch {
-      return null;
-    }
-  }
-}
-
-function openCenteredPopup(): Window | null {
-  if (typeof window === 'undefined') {
-    return null;
-  }
-
-  const left = Math.max(0, window.screenX + Math.round((window.outerWidth - GOOGLE_AUTH_POPUP_WIDTH) / 2));
-  const top = Math.max(0, window.screenY + Math.round((window.outerHeight - GOOGLE_AUTH_POPUP_HEIGHT) / 2));
-  const features = [
-    `width=${GOOGLE_AUTH_POPUP_WIDTH}`,
-    `height=${GOOGLE_AUTH_POPUP_HEIGHT}`,
-    `left=${left}`,
-    `top=${top}`,
-    'popup=yes',
-    'resizable=yes',
-    'scrollbars=yes',
-  ].join(',');
-
-  return window.open('', GOOGLE_AUTH_POPUP_NAME, features);
-}
-
-function renderPopupLoadingState(popup: Window): void {
-  try {
-    popup.document.title = 'Continue with Google';
-    popup.document.body.innerHTML = `
-      <div style="margin:0;min-height:100vh;display:flex;align-items:center;justify-content:center;background:#111827;color:#f9fafb;font-family:Arial,sans-serif;">
-        <div style="text-align:center;padding:24px;">
-          <div style="font-size:16px;font-weight:600;margin-bottom:8px;">Connecting to Google</div>
-          <div style="font-size:13px;color:#9ca3af;">Please finish sign in in this popup.</div>
-        </div>
-      </div>
-    `;
-  } catch {
-    // Ignore popup document write failures and continue with auth redirect.
-  }
-}
 
 function getApiBase(): string {
   if (import.meta.env.DEV) return '/api';
@@ -269,48 +212,6 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     };
   }, [buildUser]);
 
-  // Electron deep-link OAuth callback handler
-  useEffect(() => {
-    if (!isElectron()) return;
-
-    try {
-      const { ipcRenderer } = (window as any).require('electron');
-      const handler = (_event: any, url: string) => {
-        if (!url) return;
-
-        const parsed = parseOAuthCallbackUrl(url);
-        if (!parsed) return;
-
-        const code = parsed.searchParams.get('code');
-        const nextPath = normalizeRedirectPath(parsed.searchParams.get('next'));
-        const oauthError = parsed.searchParams.get('error_description') || parsed.searchParams.get('error');
-
-        if (oauthError) {
-          setError(oauthError);
-          return;
-        }
-
-        if (!code) return;
-
-        supabase.auth.exchangeCodeForSession(code).then(({ error: exchangeError }) => {
-          if (exchangeError) {
-            setError(exchangeError.message || 'Google sign-in failed');
-          } else {
-            navigate(nextPath, { replace: true });
-          }
-        });
-      };
-
-      ipcRenderer.on('oauth-callback', handler);
-      ipcRenderer.send('oauth-callback-ready');
-      return () => {
-        ipcRenderer.removeListener('oauth-callback', handler);
-      };
-    } catch {
-      // Not in Electron or ipcRenderer not available
-    }
-  }, [navigate]);
-
   const clearError = useCallback(() => {
     setError(null);
   }, []);
@@ -347,8 +248,8 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         authenticatedUser.isAdmin ? ROUTES.PROTECTED.ADMIN_DASHBOARD : ROUTES.DEFAULT,
         { replace: true },
       );
-    } catch (err: any) {
-      const message = err.message || 'Login failed';
+    } catch (err: unknown) {
+      const message = err instanceof Error ? err.message : 'Login failed';
       setError(message);
       throw err;
     } finally {
@@ -372,7 +273,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
           data: {
             name: name.trim(),
           },
-          emailRedirectTo: buildHashRouteUrl(ROUTES.PUBLIC.LOGIN),
+          emailRedirectTo: buildAuthCallbackUrl(),
         }
       });
 
@@ -392,13 +293,16 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         }
 
         navigate(ROUTES.DEFAULT, { replace: true });
+        return { requiresEmailConfirmation: false };
       } else if (data.user) {
         // Email confirmation is required
         setError(null);
-        navigate(ROUTES.DEFAULT, { replace: true });
+        return { requiresEmailConfirmation: true };
       }
-    } catch (err: any) {
-      const message = err.message || 'Registration failed';
+
+      throw new Error('Registration succeeded without creating a user');
+    } catch (err: unknown) {
+      const message = err instanceof Error ? err.message : 'Registration failed';
       setError(message);
       throw err;
     } finally {
@@ -406,84 +310,34 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     }
   };
 
-  const signInWithGoogle = async (redirectPath: string = ROUTES.DEFAULT) => {
+  const loginWithGoogle = async () => {
     setLoading(true);
     setError(null);
 
-    // In Electron, use the native auth popup and hand the callback back into the app.
-    if (isElectron()) {
-      try {
-        const { ipcRenderer } = (window as any).require('electron');
-
-        const callbackUrl = buildElectronCallbackUrl(redirectPath);
-
-        const { data, error: authError } = await supabase.auth.signInWithOAuth({
-          provider: 'google',
-          options: {
-            redirectTo: callbackUrl,
-            queryParams: {
-              access_type: 'offline',
-              prompt: 'consent',
-            },
-            skipBrowserRedirect: true,
-          },
-        });
-
-        if (authError) throw authError;
-
-        if (!data?.url) {
-          throw new Error('Google OAuth did not return a redirect URL.');
-        }
-
-        ipcRenderer.send('open-auth-popup', data.url);
-      } catch (err: any) {
-        const message = err.message || 'Google sign in failed';
-        setError(message);
-        throw err;
-      } finally {
-        setLoading(false);
-      }
-      return;
-    }
-
-    // Web: use popup flow
-    const popup = openCenteredPopup();
-    const callbackUrl = buildHashRouteUrl(buildGoogleCallbackPath(redirectPath, true));
-
     try {
-      if (!popup) {
-        throw new Error('Google sign-in popup was blocked. Please allow popups and try again.');
-      }
-
-      renderPopupLoadingState(popup);
-
       const { data, error: authError } = await supabase.auth.signInWithOAuth({
         provider: 'google',
         options: {
-          redirectTo: callbackUrl,
-          queryParams: {
-            access_type: 'offline',
-            prompt: 'consent',
-          },
+          redirectTo: buildAuthCallbackUrl(),
           skipBrowserRedirect: true,
         },
       });
+      if (authError) throw authError;
+      if (!data.url) throw new Error('Google authentication returned no authorization URL');
 
-      if (authError) {
-        throw authError;
+      const bridge = window as Window & {
+        require?: (id: string) => {
+          ipcRenderer?: { invoke: (channel: string, value: string) => Promise<unknown> };
+        };
+      };
+      const ipcRenderer = bridge.require?.('electron')?.ipcRenderer;
+      if (ipcRenderer) {
+        await ipcRenderer.invoke('open-auth-link', data.url);
+      } else {
+        window.location.assign(data.url);
       }
-
-      if (!data?.url) {
-        throw new Error(
-          `Google OAuth did not return a redirect URL. Confirm ${callbackUrl} is allowed in Supabase Auth URL Configuration and your Supabase callback URL is configured in Google Cloud.`
-        );
-      }
-
-      popup.location.href = data.url;
-      popup.focus();
-    } catch (err: any) {
-      popup?.close();
-      const message = err.message || 'Google sign in failed';
+    } catch (err: unknown) {
+      const message = err instanceof Error ? err.message : 'Google authentication failed';
       setError(message);
       throw err;
     } finally {
@@ -510,9 +364,9 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       user,
       isAuthenticated: !!user,
       login,
+      loginWithGoogle,
       logout,
       register,
-      signInWithGoogle,
       loading,
       error,
       clearError

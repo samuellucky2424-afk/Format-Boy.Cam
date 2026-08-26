@@ -1,83 +1,66 @@
-# Vercel Environment Variables Configuration
+# Configuration Vercel de production
 
-## Add these to Vercel Dashboard > Settings > Environment Variables
+## Projet
 
-### For GitHub Releases (NEW - Primary)
-These tell your `/api/version` endpoint where to find your releases:
+Dans Vercel, configurez **Root Directory** sur `app`. `app/vercel.json` impose ensuite `bun install --frozen-lockfile`, `bun run build` et la sortie `dist`.
 
-```
-Name: DESKTOP_GITHUB_OWNER
-Value: samuellucky2424-afk
-Environment: Production
+Les rewrites conserves sont uniquement les alias API reellement geres par les fonctions:
 
-Name: DESKTOP_GITHUB_REPO
-Value: Format-Boy.Cam
-Environment: Production
+| Route publique | Fonction Vercel |
+|---|---|
+| `/api/morphly-token` | `/api/start-session?action=morphly-token` |
+| `/api/payment/fapshi-init` | `/api/wallet?action=fapshi-init` |
+| `/api/payment/fapshi-return` | `/api/wallet?action=fapshi-return` |
+| `/api/payment/fapshi-status` | `/api/wallet?action=fapshi-status` |
+| `/api/payment/fapshi-webhook` | `/api/wallet?action=fapshi-webhook` |
 
-Name: DESKTOP_GITHUB_EXE_PATTERN
-Value: ^Format-Boy[ .]CAM[ .]Desktop[ .]Setup[ .].*\.exe$
-Environment: Production
-```
+## Variables
 
-### Keep Existing Variables
-These are still needed for the app to build/run:
+Ajoutez les valeurs dans Vercel Settings > Environment Variables. Ne placez jamais une cle serveur dans une variable `VITE_*`.
 
-```
-Name: VITE_API_BASE_URL
-Value: https://format-boy-cam.vercel.app/api
-Environment: Production
+L'origine de production unique est `https://henshin.numzer0.store`: utilisez `VITE_API_BASE_URL=https://henshin.numzer0.store/api` et cette meme origine pour `APP_PUBLIC_URL` et `PAYMENT_RETURN_URL`.
 
-Name: VITE_PAYSTACK_PUBLIC_KEY
-Value: [from your .env]
-Environment: Production
+| Groupe | Variable | Portee | Requise |
+|---|---|---|---|
+| Navigateur | `VITE_API_BASE_URL` | Build + navigateur | Oui |
+| Supabase | `VITE_SUPABASE_URL` | Build + navigateur | Oui |
+| Supabase | `VITE_SUPABASE_ANON_KEY` | Build + navigateur, cle publique | Oui |
+| Supabase | `SUPABASE_URL` | Serveur | Oui |
+| Supabase | `SUPABASE_SERVICE_ROLE_KEY` | Serveur secret | Oui |
+| Fapshi | `FAPSHI_BASE_URL` | Serveur | Oui |
+| Fapshi | `FAPSHI_APIUSER` | Serveur secret | Oui |
+| Fapshi | `FAPSHI_APIKEY` | Serveur secret | Oui |
+| Fapshi | `FAPSHI_WEBHOOK_SECRET` | Serveur secret | Oui |
+| Fapshi | `APP_PUBLIC_URL` | Serveur, URL de retour | Oui |
+| Fapshi | `PAYMENT_RETURN_URL` | Serveur, destination apres checkout | Oui |
+| Fapshi | `FAPSHI_APP_RETURN_URL` | Serveur, pont HTTPS vers `henshin://` | Oui |
+| Fapshi | `FAPSHI_WEBHOOK_URL` | Documentation ops | Non |
+| Reactor | `REACTOR_API_KEY` | Serveur secret | Oui |
+| Reactor | `REACTOR_API_URL` | Serveur | Non, defaut Reactor |
+| Reactor | `VITE_REACTOR_API_URL` | Navigateur, URL publique | Non |
+| Reactor | `VITE_REACTOR_DASHBOARD_URL` | Navigateur, URL publique | Non |
+| GitHub | `DESKTOP_GITHUB_OWNER` | Serveur | Oui, `pius-coder` |
+| GitHub | `DESKTOP_GITHUB_REPO` | Serveur | Oui, `ghostSwap237` |
+| GitHub | `DESKTOP_GITHUB_EXE_PATTERN` | Serveur | Oui, `^Henshin-Setup-\d+\.\d+\.\d+\.exe$` |
+| GitHub | `GITHUB_TOKEN` | Serveur secret | Non, utile pour depot prive/quota |
 
-Name: VITE_SUPABASE_URL
-Value: [from your .env]
-Environment: Production
+`MORPHLY_API_KEY` est requis cote serveur si Morphly est actif. `EXCHANGE_RATE_API_KEY` est optionnel selon le fournisseur de taux. Les fallbacks updater `DESKTOP_*` et Supabase Storage sont decrits dans `app/.env.example`; GitHub Releases reste la source primaire.
 
-Name: VITE_SUPABASE_ANON_KEY
-Value: [from your .env]
-Environment: Production
-```
+En production, utilisez `FAPSHI_BASE_URL=https://live.fapshi.com` et `FAPSHI_APP_RETURN_URL=https://henshin.numzer0.store/api/payment/fapshi-return`. Dans le dashboard Fapshi, configurez `https://henshin.numzer0.store/api/payment/fapshi-webhook` et le meme secret que `FAPSHI_WEBHOOK_SECRET`. Le webhook recoit les POST serveur; le pont HTTPS ouvre ensuite `henshin://payment-success` pour revenir dans l'application.
 
-## Fallback Variables (Optional - Keep if using Supabase as backup)
-If you want to keep Supabase as a fallback when GitHub is not configured:
+Dans Supabase Authentication > URL Configuration, utilisez `https://henshin.numzer0.store` comme Site URL et ajoutez `https://henshin.numzer0.store/auth-callback` ainsi que `henshin://auth-callback` dans Redirect URLs. Une inscription web revient au callback HTTPS; une inscription depuis Electron ouvre directement l'application. Les deux parcours terminent ensuite l'echange PKCE. Ne laissez aucune URL localhost comme destination de production.
 
-```
-Name: DESKTOP_SUPABASE_BUCKET
-Value: [bucket-name]
-Environment: Production
+## Preflight et deploiement
 
-Name: DESKTOP_SUPABASE_PATH
-Value: desktop/Format-Boy CAM Desktop Setup {version}.exe
-Environment: Production
+Depuis la racine du depot, sans afficher de valeur d'environnement:
 
-Name: DESKTOP_SUPABASE_ACCESS
-Value: signed
-Environment: Production
-```
-
-## Steps to Configure in Vercel
-1. Go to https://vercel.com/dashboard
-2. Select your Format-Boy project
-3. Go to Settings → Environment Variables
-4. Add each variable above (copy-paste the Name and Value)
-5. Select "Production" environment
-6. Click "Save"
-7. Redeploy to apply changes: Deploy → Redeploy
-
-### How to Copy from Local .env
-Your current `.env` file contains sensitive keys. When copying to Vercel:
-- Use the values from your `.env` file
-- Never commit secrets to GitHub
-- Vercel secrets are encrypted and safe
-
-## Testing
-After setting environment variables, test your endpoint:
-```bash
-curl https://format-boy-cam.vercel.app/api/version
+```powershell
+bunx vercel pull --yes --environment=production --cwd app
+bun app/scripts/vercel-preflight.mjs
+bunx vercel build --prod --cwd app
+bunx vercel deploy --prebuilt --prod --cwd app
 ```
 
-Should return: `{"version": "...", "download_url": "...", ...}`
+Puis verifiez `https://<domaine>/api/version`: le nom doit etre `Henshin-Setup-<version>.exe` et `sha256` doit contenir 64 caracteres hexadecimaux.
 
-If it returns error, check Vercel Function logs.
+Ne commitez jamais `app/.env`. Si un secret a deja ete expose dans Git ou dans des journaux publics, revoquez-le et faites tourner **tous** les anciens secrets concernes avant le deploiement.

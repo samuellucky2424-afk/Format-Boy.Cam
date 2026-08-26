@@ -20,13 +20,13 @@ function getApiBase(): string {
     // If it's configured to localhost but we are in production, override it to Vercel.
     // This prevents the desktop app from being broken if VITE_API_BASE_URL was left as localhost.
     if (!import.meta.env.DEV && configuredBase.includes('localhost')) {
-      return 'https://format-boy-cam.vercel.app/api';
+      return 'https://henshin.vercel.app/api';
     }
     return `${configuredBase}/api`;
   }
 
   // Fall back to the Vercel app in production if no explicit API base is configured.
-  return import.meta.env.DEV ? '/api' : 'https://format-boy-cam.vercel.app/api';
+  return import.meta.env.DEV ? '/api' : 'https://henshin.vercel.app/api';
 }
 
 function withLeadingSlash(path: string): string {
@@ -83,7 +83,8 @@ export async function apiFetch(
 ): Promise<Response> {
   const url = getApiUrl(path);
   const { retries, timeoutMs: customTimeoutMs, signal, ...fetchInit } = init ?? {};
-  const maxRetries = retries ?? MAX_RETRIES;
+  const method = String(fetchInit.method || 'GET').toUpperCase();
+  const maxRetries = retries ?? (method === 'GET' || method === 'HEAD' ? MAX_RETRIES : 0);
   const timeoutMs = customTimeoutMs ?? DEFAULT_TIMEOUT_MS;
 
   let lastError: unknown;
@@ -99,8 +100,16 @@ export async function apiFetch(
     }, timeoutMs);
 
     try {
+      const headers = new Headers(fetchInit.headers);
+      if (!headers.has('Authorization')) {
+        const { data } = await supabase.auth.getSession();
+        const accessToken = data.session?.access_token;
+        if (accessToken) headers.set('Authorization', `Bearer ${accessToken}`);
+      }
+
       const response = await fetch(url, {
         ...fetchInit,
+        headers,
         signal: controller.signal,
       });
       return response;
@@ -127,3 +136,4 @@ export async function apiFetch(
 
   throw lastError;
 }
+import { supabase } from '@/lib/supabase';

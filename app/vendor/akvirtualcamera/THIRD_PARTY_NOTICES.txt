@@ -1,0 +1,15 @@
+akvirtualcamera 9.4.1
+Copyright (C) the akvirtualcamera contributors
+
+Henshin distributes the unmodified official Windows installer as a separate
+program for its Windows 10 DirectShow camera backend. akvirtualcamera is
+licensed under GNU GPL version 3.
+
+Binary release:
+https://github.com/webcamoid/akvirtualcamera/releases/tag/9.4.1
+
+Corresponding source:
+https://github.com/webcamoid/akvirtualcamera/tree/9.4.1
+https://github.com/webcamoid/akvirtualcamera/archive/refs/tags/9.4.1.zip
+
+The license text is included as COPYING.

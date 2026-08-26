@@ -1,4 +1,4 @@
--- Format-Boy Cam - Credit Billing Schema
+-- Henshin - Credit Billing Schema
 
 -- Enable UUID extension
 CREATE EXTENSION IF NOT EXISTS "uuid-ossp";
@@ -59,7 +59,7 @@ CREATE TABLE IF NOT EXISTS public.sessions (
   credits_used INTEGER DEFAULT 0,
   cost NUMERIC(12, 2) DEFAULT 0,
   status TEXT DEFAULT 'active' CHECK (status IN ('active', 'ended', 'interrupted')),
-  model TEXT DEFAULT 'format-boy-cam-v1',
+  model TEXT DEFAULT 'henshin-v1',
   metadata JSONB DEFAULT '{}',
   created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
 );

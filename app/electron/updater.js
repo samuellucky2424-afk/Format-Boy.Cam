@@ -5,10 +5,10 @@ import fs from 'fs';
 import path from 'path';
 import { Readable } from 'stream';
 
-export const CURRENT_VERSION = '2.0.20';
+export const CURRENT_VERSION = '2.0.28';
 
-const DEFAULT_VERSION_ENDPOINT = 'https://format-boy-cam.vercel.app/api/version';
-const DEFAULT_DOWNLOAD_URL = 'https://mega.nz/file/yDZVDBQJ#jOM2bnxJuGUqBp3qri_8sCgFGJb3pbEiIv-4DI-WZA8';
+const DEFAULT_VERSION_ENDPOINT = 'https://henshin.vercel.app/api/version';
+const DEFAULT_DOWNLOAD_URL = '';
 const BACKGROUND_CHECK_DELAY_MS = 15_000;
 
 let updateState = createInitialState();
@@ -65,7 +65,7 @@ function getVersionManifestUrl() {
 
 function getUpdateDirectory() {
   const localAppData = process.env.LOCALAPPDATA || app.getPath('temp');
-  return path.join(localAppData, 'FormatBoyCam', 'update');
+  return path.join(localAppData, 'HenshinCam', 'update');
 }
 
 function compareVersions(left, right) {
@@ -99,7 +99,7 @@ function inferArtifactType(manifest, fileName = '') {
 }
 
 function sanitizeFileName(fileName) {
-  const fallbackName = `format-boy-cam-${Date.now()}.exe`;
+  const fallbackName = `henshin-${Date.now()}.exe`;
   const candidate = String(fileName || '').trim();
   const normalized = candidate.replace(/["<>:|?*\\\/]+/g, '-');
 
@@ -128,7 +128,7 @@ function extractFileName(response, version) {
     // Ignore URL parsing errors and fall back to a generated file name.
   }
 
-  return sanitizeFileName(`CALL-ME-${version}.exe`);
+  return sanitizeFileName(`HENSHIN-${version}.exe`);
 }
 
 function isProbablyMegaShare(url) {
@@ -232,6 +232,7 @@ async function fetchVersionManifest() {
   const payload = await response.json();
   const version = String(payload?.version || '').trim();
   const downloadUrl = String(payload?.download_url || DEFAULT_DOWNLOAD_URL).trim();
+  const sha256 = String(payload?.sha256 || '').trim();
 
   if (!version) {
     throw new Error('Version server response is missing a version value.');
@@ -241,11 +242,15 @@ async function fetchVersionManifest() {
     throw new Error('Version server response is missing a download URL.');
   }
 
+  if (!/^[a-f0-9]{64}$/i.test(sha256)) {
+    throw new Error('Version server response is missing a valid SHA256 checksum.');
+  }
+
   return {
     version,
     download_url: downloadUrl,
     artifact_type: inferArtifactType(payload),
-    sha256: String(payload?.sha256 || '').trim() || null,
+    sha256,
     notes: String(payload?.notes || '').trim() || null,
   };
 }
@@ -340,7 +345,7 @@ async function installDownloadedUpdate() {
       status: 'installing',
       progress: 100,
       error: null,
-      message: 'Installing update and restarting CALL ME...',
+      message: 'Installing update and restarting Henshin 変身...',
     });
 
     const launchError = await shell.openPath(updateState.downloadedFilePath);
@@ -400,7 +405,7 @@ export async function checkForUpdates({ silent = false, autoDownload = true, aut
         notes: manifest.notes,
         checkedAt,
         progress: 100,
-        message: `CALL ME ${currentVersion} is up to date.`,
+        message: `Henshin 変身 ${currentVersion} is up to date.`,
       });
     }
 

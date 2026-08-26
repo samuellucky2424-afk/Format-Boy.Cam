@@ -1,17 +1,18 @@
 {
-    "name": "call-me",
+    "name": "henshin",
     "private": true,
-    "version": "2.0.25",
+    "version": "2.0.28",
     "type": "module",
     "main": "electron/main.js",
     "build": {
-        "appId": "com.formatboy.app",
-        "productName": "CALL ME",
+        "appId": "com.henshin.app",
+        "productName": "Henshin 変身",
+        "artifactName": "Henshin-Setup-${version}.${ext}",
         "protocols": [
             {
-                "name": "CALL ME OAuth Callback",
+                "name": "Henshin Application Protocol",
                 "schemes": [
-                    "formatboy"
+                    "henshin"
                 ]
             }
         ],
@@ -22,30 +23,50 @@
             "dist/**/*",
             "electron/**/*"
         ],
+        "extraResources": [
+            {
+                "from": "vendor/akvirtualcamera",
+                "to": "akvirtualcamera",
+                "filter": [
+                    "**/*"
+                ]
+            }
+        ],
         "afterPack": "build/afterPack.cjs",
         "win": {
             "target": [
                 "nsis"
             ],
-            "executableName": "CALL-ME",
-            "icon": "public/icon.ico"
+            "executableName": "HENSHIN",
+            "icon": "public/logo.png"
         },
         "nsis": {
+            "oneClick": true,
             "allowElevation": true,
             "perMachine": true,
+            "packElevateHelper": true,
             "include": "build/installer.nsh"
         }
     },
     "scripts": {
         "dev": "vite",
+        "dev:api": "bun run scripts/local-api-server.mjs",
+        "dev:web": "vite",
+        "dev:all": "concurrently -n api,web -c blue,green \"bun run dev:api\" \"bun run dev:web\"",
         "build": "cross-env NODE_OPTIONS=--max-old-space-size=2048 vite build",
+        "test": "bun test",
+        "vercel:build": "bun run scripts/vercel-preflight.mjs && bun run build",
         "lint": "eslint .",
         "preview": "vite preview",
-        "electron:dev": "electron .",
-        "electron:build": "npm run build && electron-builder --win",
-        "electron:release": "npm run build && electron-builder --win --publish never"
+        "electron:dev": "node scripts/dev-electron.mjs",
+        "electron:build": "bun run build && electron-builder --win",
+        "electron:release": "bun run build && electron-builder --win --publish never",
+        "release:sync": "bun run scripts/sync-release-version.mjs",
+        "release:preflight": "bun run scripts/release-preflight.mjs"
     },
     "dependencies": {
+        "@fal-ai/client": "^1.10.1",
+        "@fontsource-variable/geist": "^5.3.0",
         "@hookform/resolvers": "^5.2.2",
         "@radix-ui/react-accordion": "^1.2.12",
         "@radix-ui/react-alert-dialog": "^1.1.15",
@@ -73,6 +94,7 @@
         "@radix-ui/react-toggle": "^1.1.10",
         "@radix-ui/react-toggle-group": "^1.1.11",
         "@radix-ui/react-tooltip": "^1.2.8",
+        "@reactor-models/x2": "0.5.2",
         "@supabase/supabase-js": "^2.100.1",
         "class-variance-authority": "^0.7.1",
         "clsx": "^2.1.1",
@@ -82,8 +104,11 @@
         "dotenv": "^16.3.1",
         "embla-carousel-react": "^8.6.0",
         "express": "^4.18.2",
+        "false": "^0.0.4",
         "input-otp": "^1.4.2",
         "lucide-react": "^0.562.0",
+        "metal-fx": "^1.0.4",
+        "motion": "^13.1.1",
         "multer": "^1.4.5-lts.1",
         "next-themes": "^0.4.6",
         "react": "^19.2.0",
@@ -92,6 +117,7 @@
         "react-hook-form": "^7.70.0",
         "react-resizable-panels": "^4.2.2",
         "react-router-dom": "^7.13.2",
+        "react-use-measure": "^2.1.7",
         "recharts": "^2.15.4",
         "sonner": "^2.0.7",
         "tailwind-merge": "^3.4.0",
@@ -106,6 +132,7 @@
         "@types/react-dom": "^19.2.3",
         "@vitejs/plugin-react": "^5.1.1",
         "autoprefixer": "^10.4.23",
+        "concurrently": "^10.0.5",
         "cross-env": "^10.1.0",
         "electron": "^41.2.0",
         "electron-builder": "^26.8.1",

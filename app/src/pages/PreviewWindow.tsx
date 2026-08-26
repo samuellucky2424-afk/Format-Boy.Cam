@@ -6,13 +6,13 @@ function PreviewWindow() {
   const [hasStream, setHasStream] = useState(false);
 
   useEffect(() => {
-    document.title = 'CALL ME preview';
+    document.title = 'Henshin 変身 preview';
   }, []);
 
   useEffect(() => {
-    const syncFromDashboard = () => {
-      const previewVideo = videoRef.current;
+    const previewVideo = videoRef.current;
 
+    const syncFromDashboard = () => {
       if (!previewVideo) {
         return;
       }
@@ -50,8 +50,8 @@ function PreviewWindow() {
     return () => {
       window.clearInterval(intervalId);
 
-      if (videoRef.current) {
-        videoRef.current.srcObject = null;
+      if (previewVideo) {
+        previewVideo.srcObject = null;
       }
     };
   }, []);
@@ -69,8 +69,8 @@ function PreviewWindow() {
       {!hasStream && (
         <div className="w-full h-full flex items-center justify-center bg-black text-center px-6">
           <div className="max-w-md">
-            <h1 className="text-white text-3xl font-semibold tracking-[0.08em] uppercase">CALL ME preview</h1>
-            <p className="mt-4 text-sm text-[#A1A1AA]">
+            <h1 className="text-white text-3xl font-semibold tracking-[0.08em] uppercase">Henshin 変身 preview</h1>
+            <p className="mt-4 text-sm text-muted-foreground">
               Waiting for the live output stream. Open this window from the dashboard OBS Preview button and start streaming.
             </p>
           </div>

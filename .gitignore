@@ -18,5 +18,6 @@ app/release-*/
 app/release-validation/
 app/dist/
 native-camera/build/
+.tools/
 .vercel/
 .vercel

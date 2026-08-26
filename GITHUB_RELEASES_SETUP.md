@@ -1,199 +1,75 @@
-# GitHub Releases Automation Setup Guide
+# Releases GitHub Henshin
 
-## Overview
-This guide explains how to set up GitHub Actions to automatically build, release, and host your Format-Boy Desktop updates using GitHub Releases instead of Supabase Storage.
+## Prerequis
 
-## What's Been Set Up
+- Runner GitHub `windows-latest`, Bun `1.3.14`, Node.js 22 et `app/bun.lock` sont utilises par le workflow.
+- Les cibles officielles sont **Windows 10 x64 et Windows 11 x64**.
+- Les quatre binaires camera sont compiles en Release avec le runtime MSVC statique `/MT`; Visual Studio et le redistribuable VC++ ne sont pas requis sur le PC cible.
+- `henshin_cam_mf_smoke.exe` reste un outil de diagnostic de build/QA et n'est pas livre.
+- Une signature Authenticode valide est obligatoire avant une diffusion publique. Un build interne non signe reste possible.
 
-### 1. GitHub Actions Workflow (`.github/workflows/release.yml`)
-When you push a version tag (e.g., `v1.0.0`), GitHub Actions will:
-- Check out your code
-- Install dependencies  
-- Build the Windows installer using `npm run electron:release`
-- Calculate the SHA256 hash
-- Create a GitHub Release
-- Upload the tag-matched installer as a release asset
+## Secrets GitHub Actions
 
-### 2. Updated `/api/version` Endpoint
-The endpoint now supports GitHub Releases as the primary source:
-- First tries to fetch from GitHub Releases API if configured
-- Falls back to Supabase Storage or direct URL if GitHub is not configured
-- Extracts version, download URL, SHA256, and release notes from GitHub
+Variables navigateur requises par le preflight:
 
-## Setup Steps
+- `VITE_API_BASE_URL`
+- `VITE_SUPABASE_URL`
+- `VITE_SUPABASE_ANON_KEY`
 
-### Step 1: Push Your Workflow to GitHub
-The `.github/workflows/release.yml` file is already created. Push it to your repo:
-```bash
-git add .github/workflows/release.yml
-git commit -m "Add GitHub Actions release automation"
-git push origin main
+Signature Authenticode obligatoire pour le workflow de publication:
+
+- `WINDOWS_PFX_BASE64`: contenu base64 du certificat PFX
+- `WINDOWS_PFX_PASSWORD`: mot de passe du certificat
+
+Le workflow signe d'abord les quatre binaires camera avec `signtool`, puis transmet le meme certificat a electron-builder via `CSC_LINK` et `CSC_KEY_PASSWORD`. Un build local interne peut rester non signe, mais le workflow refuse de publier sans certificat.
+
+`GITHUB_TOKEN` est fourni automatiquement par Actions. Le workflow ne cree pas `app/.env`, n'utilise pas npm et ne modifie aucun lockfile.
+
+## Preparer une version
+
+Depuis `app`, synchronisez package, API et updater sans toucher `bun.lock`:
+
+```powershell
+bun run release:sync 2.0.27
+bun install --frozen-lockfile
 ```
 
-### Step 2: Configure Vercel Environment Variables
-On your Vercel dashboard, add these environment variables to your project:
+Compilez les binaires sur une machine de build Windows avec Visual Studio Build Tools et CMake:
 
-```
-DESKTOP_GITHUB_OWNER=samuellucky2424-afk  # Your GitHub username/organization
-DESKTOP_GITHUB_REPO=Format-Boy.Cam  # Your repository name
-DESKTOP_GITHUB_EXE_PATTERN=^Format-Boy[ .]CAM[ .]Desktop[ .]Setup[ .].*\.exe$  # Regex pattern for the installer filename
+```powershell
+cmake -S native-camera -B native-camera/build -A x64
+cmake --build native-camera/build --config Release --parallel
 ```
 
-**Optional:** If you still want to keep Supabase as a fallback, leave those variables as-is. GitHub will be checked first.
+Chargez les trois variables `VITE_*` requises dans l'environnement du processus, puis lancez:
 
-### Step 3: (Optional) Create Secrets for Local Testing
-If you want to test the workflow locally or need to use secrets:
-```bash
-# These are already available as GitHub default secrets:
-# - GITHUB_TOKEN (automatically provided)
+```powershell
+cd app
+bun run release:preflight
+bun run electron-builder --win nsis --publish never
 ```
 
-## How to Release a New Version
+Le preflight verifie les quatre binaires, la version `2.0.27`, `Henshin-Setup-${version}.${ext}`, les variables navigateur, puis lint et build. Il ne compile rien sur le PC client.
 
-### Simple Release Flow:
-1. **Update your version in `app/package.json`:**
-   ```json
-   {
-     "version": "1.0.1"
-   }
-   ```
+## Publier
 
-2. **Commit and push the version bump:**
-   ```bash
-   git add app/package.json
-   git commit -m "Bump version to 1.0.1"
-   git push origin main
-   ```
+La version du tag est la source de verite du job; le workflow la resynchronise sans npm lock:
 
-3. **Create and push a version tag:**
-   ```bash
-   git tag v1.0.1
-   git push origin v1.0.1
-   ```
-
-4. **GitHub Actions automatically:**
-   - Builds the Windows installer
-   - Creates a Release: `https://github.com/samuellucky2424-afk/Format-Boy.Cam/releases/tag/v1.0.1`
-   - Uploads the installer as a release asset
-   - Includes SHA256 hash in the release notes
-
-5. **Your app immediately detects the update:**
-   - Desktop app calls `/api/version`
-   - Vercel fetches the latest GitHub Release
-   - Returns download URL pointing to the GitHub Release asset
-   - User sees "Update Available" notification
-
-## Updating Release Notes
-
-The workflow automatically includes SHA256 in the release description. To add custom release notes:
-
-1. After the automated release is created, edit it on GitHub
-2. Update the release description with your changelog
-3. The `/api/version` endpoint will serve this to your users
-
-### Release Note Format (auto-detected):
-The endpoint looks for SHA256 in this format:
-```
-SHA256: `abc123def456...`
-or
-SHA256: abc123def456...
+```powershell
+git tag v2.0.27
+git push origin v2.0.27
 ```
 
-## Environment Variables Reference
+Le workflow recherche exactement `app/release/Henshin-Setup-2.0.27.exe`, calcule SHA256, produit le fichier `.sha256`, puis charge les deux assets dans la release. `/api/version` selectionne uniquement le motif `Henshin-Setup-<semver>.exe`; l'updater refuse un manifeste sans checksum SHA256 valide et verifie le fichier telecharge avant execution.
 
-### GitHub Mode (NEW - Primary)
-```
-DESKTOP_GITHUB_OWNER        # GitHub username/org
-DESKTOP_GITHUB_REPO         # Repository name  
-DESKTOP_GITHUB_EXE_PATTERN  # Regex for the installer filename
-```
+Une build de test non signee doit etre lancee manuellement avec `allow_unsigned=true`. Elle est publiee comme prerelease et ne change pas l'exigence de signature des tags normaux.
 
-### Supabase Mode (OLD - Fallback)
-```
-DESKTOP_SUPABASE_BUCKET     # Bucket name
-DESKTOP_SUPABASE_PATH       # Path template (e.g., desktop/Format-Boy CAM Desktop Setup {version}.exe)
-DESKTOP_SUPABASE_ACCESS     # 'public' or 'signed' (default: signed)
-```
+## Installation et desinstallation
 
-### Direct URL Mode (Fallback)
-```
-DESKTOP_LATEST_VERSION      # Version number
-DESKTOP_DOWNLOAD_URL        # Direct download link
-DESKTOP_ARTIFACT_TYPE       # 'portable' or 'installer'
-DESKTOP_DOWNLOAD_SHA256     # SHA256 hash
-DESKTOP_RELEASE_NOTES       # Release notes/changelog
-```
+L'installateur est per-machine et demande les droits administrateur. Sur Windows 11, le registrar active la camera Media Foundation; sur Windows 10, il charge uniquement le filtre DirectShow compatible. Il n'existe aucun fallback per-user; un registrar absent ou en erreur fait echouer explicitement l'installation.
 
-## Testing the Setup
+La desinstallation doit d'abord desinscrire la camera et COM. Elle supprime ensuite uniquement les repertoires camera possedes `ProgramData\HenshinCam` et `Public\Documents\HenshinCam`; une erreur de desinscription arrete la desinstallation afin de permettre une nouvelle tentative.
 
-### Test 1: Verify Workflow Syntax
-```bash
-# GitHub Actions workflow is valid (no action needed, will fail at push if invalid)
-```
+## Securite
 
-### Test 2: Create a Test Release
-```bash
-# Create and push a test tag
-git tag v1.0.0-test
-git push origin v1.0.0-test
-
-# Watch the workflow on GitHub Actions tab
-# Delete the tag after testing: git push origin :v1.0.0-test
-```
-
-### Test 3: Verify `/api/version` Endpoint
-```bash
-curl https://format-boy-cam.vercel.app/api/version
-```
-
-Should return something like:
-```json
-{
-  "version": "1.0.1",
-   "download_url": "https://github.com/samuellucky2424-afk/Format-Boy.Cam/releases/download/v1.0.1/Format-Boy%20CAM%20Desktop%20Setup%201.0.1.exe",
-   "artifact_type": "installer",
-  "sha256": "abc123...",
-  "notes": "Release notes here...",
-   "file_name": "Format-Boy CAM Desktop Setup 1.0.1.exe",
-  "source": "github-release"
-}
-```
-
-## Troubleshooting
-
-### Workflow doesn't trigger
-- Verify the tag format matches: `v*.*.*` (e.g., `v1.0.0`)
-- Check Actions tab on GitHub for workflow runs
-- Verify `.github/workflows/release.yml` is on main branch
-
-### Build fails in workflow
-- Check the Actions logs for specific errors
-- Verify all environment secrets are set (on Actions settings)
-- Test `npm run electron:release` locally first
-
-### `/api/version` returns wrong data
-- Verify `DESKTOP_GITHUB_OWNER`, `DESKTOP_GITHUB_REPO`, and `DESKTOP_GITHUB_EXE_PATTERN` are set correctly
-- Check that the .exe was successfully uploaded to the Release
-- Look at Vercel Function logs for errors
-
-### SHA256 not detected
-- Ensure the release notes contain the SHA256 in one of these formats:
-  - `SHA256: abc123...`
-  - `SHA256: \`abc123...\``
-- Manually add it to the release notes if needed
-
-## Future Enhancements
-
-Consider adding:
-- Auto-bump version during workflow (e.g., with semver)
-- Multiple artifact types (installer + portable)
-- Changelog generation from commits
-- Draft releases for testing
-- Automatic rollout rate limiting
-
-## Questions?
-
-Refer to:
-- [GitHub Actions Documentation](https://docs.github.com/en/actions)
-- [GitHub Releases Documentation](https://docs.github.com/en/repositories/releasing-projects-on-github)
-- [Electron Builder Documentation](https://www.electron.build/)
+Ne committez ni `app/.env`, ni PFX, ni token. Si l'historique Git, une ancienne release ou des logs ont expose des secrets, faites tourner tous les anciens secrets concernes avant toute release publique. La validation finale doit etre faite sur des VM Windows 10 x64 et Windows 11 x64 propres, sans Visual Studio ni VC++ Redistributable installe.

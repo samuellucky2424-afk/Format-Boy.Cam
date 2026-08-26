@@ -1,17 +1,21 @@
 import * as React from "react"
 
 import { cn } from "@/lib/utils"
+import { TextureCard } from "@/components/ui/texture-card"
 
-function Card({ className, ...props }: React.ComponentProps<"div">) {
+function Card({ className, children, ...props }: React.ComponentProps<"div">) {
   return (
-    <div
+    <TextureCard
       data-slot="card"
       className={cn(
-        "bg-card text-card-foreground flex flex-col gap-6 rounded-2xl border shadow-xl shadow-black/10",
+        "text-card-foreground",
         className
       )}
+      contentClassName="flex h-full flex-col gap-6 py-6"
       {...props}
-    />
+    >
+      {children}
+    </TextureCard>
   )
 }
 

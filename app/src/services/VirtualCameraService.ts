@@ -1,10 +1,10 @@
 // VirtualCameraService
 // Captures frames from a <video> or <canvas> element and sends them to the
-// Electron main process which writes them to the Format-Boy CAM pipe publisher.
+// Electron main process which writes them to the Henshin pipe publisher.
 //
 // Frame pipeline:
 //   Canvas (RGBA) → R↔B swap in main.js → PipeFrameHeader → publisher stdin
-//   → file bridge → FormatBoyVirtualCameraMF.dll → FrameServer → apps
+//   → file bridge → HenshinVirtualCameraMF.dll → FrameServer → apps
 
 declare global {
   interface Window {
@@ -138,7 +138,7 @@ export class VirtualCameraService {
       this._notReadyCount++;
       const warnEvery = Math.max(1, VirtualCameraService.FPS * 2);
       // Keep sending the current canvas frame so WhatsApp receives a stable
-      // camera stream while the Morphly video is warming up or recovering.
+      // camera stream while the remote PRO video is warming up or recovering.
       if (this._notReadyCount % warnEvery === 1) {
         console.warn(
           `[VirtualCameraService] source video not ready ` +
@@ -153,7 +153,7 @@ export class VirtualCameraService {
     } else {
       this._notReadyCount = 0;
       try {
-        // Preserve the Morphly frame's aspect ratio instead of stretching it.
+        // Preserve the remote frame's aspect ratio instead of stretching it.
         const scale = Math.min(
           VirtualCameraService.WIDTH / video.videoWidth,
           VirtualCameraService.HEIGHT / video.videoHeight,
@@ -214,4 +214,3 @@ export class VirtualCameraService {
     }
   }
 }
-

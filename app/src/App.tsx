@@ -1,7 +1,6 @@
 import { lazy, Suspense } from 'react';
 import { HashRouter, Routes, Route, Navigate } from 'react-router-dom';
 import { AuthProvider } from '@/context/AuthContext';
-import { UIProvider } from '@/context/UIContext';
 import { AppProvider } from '@/context/AppContext';
 import { ProtectedRoute, PublicRoute } from '@/components/ProtectedRoute';
 import { ErrorBoundary } from '@/components/ErrorBoundary';
@@ -11,30 +10,24 @@ import LoadingScreen from '@/components/LoadingScreen';
 import { ROUTES } from '@/lib/routes';
 
 const Login = lazy(() => import('@/pages/Login'));
-const AuthCallback = lazy(() => import('@/pages/AuthCallback'));
 import { UpdateModal } from '@/components/UpdateModal';
 const Dashboard = lazy(() => import('@/pages/Dashboard'));
 const PreviewWindow = lazy(() => import('@/pages/PreviewWindow'));
 const Wallet = lazy(() => import('@/pages/Wallet'));
-const Subscription = lazy(() => import('@/pages/Subscription'));
 const Settings = lazy(() => import('@/pages/Settings'));
 const AdminDashboard = lazy(() => import('@/pages/AdminDashboard'));
 const NotFound = lazy(() => import('@/pages/NotFound'));
 const PaymentSuccess = lazy(() => import('@/pages/PaymentSuccess'));
+const AuthCallback = lazy(() => import('@/pages/AuthCallback'));
 
 function App() {
   return (
     <ErrorBoundary>
       <HashRouter>
         <AuthProvider>
-          <UIProvider>
-            <AppProvider>
+          <AppProvider>
               <Suspense fallback={<LoadingScreen />}>
                 <Routes>
-                  <Route
-                    path={ROUTES.PUBLIC.AUTH_CALLBACK}
-                    element={<AuthCallback />}
-                  />
                   <Route
                     path={ROUTES.PUBLIC.LOGIN}
                     element={
@@ -52,13 +45,10 @@ function App() {
                     }
                   />
                   <Route
-                    path={ROUTES.PROTECTED.SUBSCRIPTION}
-                    element={<Subscription />}
-                  />
-                  <Route
                     path={ROUTES.PUBLIC.PAYMENT_SUCCESS}
                     element={<PaymentSuccess />}
                   />
+                  <Route path={ROUTES.PUBLIC.AUTH_CALLBACK} element={<AuthCallback />} />
                   <Route path="/preview" element={<PreviewWindow />} />
                   <Route
                     path="/wallet"
@@ -72,26 +62,22 @@ function App() {
                       </ProtectedRoute>
                     }
                   >
-                    <Route index element={<Navigate to={ROUTES.DEFAULT} replace />} />
+                    <Route index element={<Dashboard />} />
+                    <Route path={ROUTES.PROTECTED.DASHBOARD} element={<Dashboard />} />
                     <Route path={ROUTES.PROTECTED.WALLET} element={<Wallet />} />
+                    <Route
+                      path={ROUTES.PROTECTED.SUBSCRIPTION}
+                      element={<Navigate to={`${ROUTES.PROTECTED.WALLET}?buy=1`} replace />}
+                    />
                     <Route path={ROUTES.PROTECTED.SETTINGS} element={<Settings />} />
                     <Route path={ROUTES.PROTECTED.ADMIN_DASHBOARD} element={<AdminDashboard />} />
                   </Route>
-                  <Route
-                    path={ROUTES.PROTECTED.DASHBOARD}
-                    element={
-                      <ProtectedRoute>
-                        <Dashboard />
-                      </ProtectedRoute>
-                    }
-                  />
                   <Route path="*" element={<NotFound />} />
                 </Routes>
               </Suspense>
               <Toaster />
               <UpdateModal />
             </AppProvider>
-          </UIProvider>
         </AuthProvider>
       </HashRouter>
     </ErrorBoundary>

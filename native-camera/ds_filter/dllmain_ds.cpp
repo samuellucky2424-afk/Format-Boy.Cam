@@ -1,4 +1,4 @@
-// DllMain and COM exports for FormatBoyVirtualCamera.dll (DirectShow)
+// DllMain and COM exports for HenshinVirtualCamera.dll (DirectShow)
 #define WIN32_LEAN_AND_MEAN
 #define NOMINMAX
 #define INITGUID   // must be defined ONCE per DLL before windows.h
@@ -6,7 +6,7 @@
 #include <dshow.h>    // already pulls in uuids.h — do NOT include uuids.h again with INITGUID
 #include <shlwapi.h>
 #include <olectl.h>
-#include "../formatboy_ids.h"
+#include "../henshin_ids.h"
 #include "ds_virtual_camera.h"
 
 static HMODULE g_hModule = nullptr;
@@ -24,7 +24,7 @@ public:
     STDMETHOD_(ULONG,Release)() override { return 1; }
     STDMETHOD(CreateInstance)(IUnknown* outer, REFIID riid, void** ppv) override {
         if (outer) return CLASS_E_NOAGGREGATION;
-        return CFormatBoyDSFilter::CreateInstance(riid, ppv);
+        return CHenshinDSFilter::CreateInstance(riid, ppv);
     }
     STDMETHOD(LockServer)(BOOL) override { return S_OK; }
 };
@@ -40,7 +40,7 @@ BOOL APIENTRY DllMain(HMODULE hMod, DWORD reason, LPVOID) {
 }
 
 STDAPI DllGetClassObject(REFCLSID rclsid, REFIID riid, LPVOID* ppv) {
-    if (rclsid != CLSID_FormatBoyVirtualCameraDS) return CLASS_E_CLASSNOTAVAILABLE;
+    if (rclsid != CLSID_HenshinVirtualCameraDS) return CLASS_E_CLASSNOTAVAILABLE;
     return g_dsFactory.QueryInterface(riid, ppv);
 }
 
@@ -57,7 +57,7 @@ STDAPI DllRegisterServer() {
     GetModuleFileNameW(g_hModule, dllPath, MAX_PATH);
 
     wchar_t clsid[64] = {};
-    StringFromGUID2(CLSID_FormatBoyVirtualCameraDS, clsid, 64);
+    StringFromGUID2(CLSID_HenshinVirtualCameraDS, clsid, 64);
 
     // HKLM\SOFTWARE\Classes\CLSID\{...}\InprocServer32
     wchar_t key[256];
@@ -109,7 +109,7 @@ STDAPI DllRegisterServer() {
 
 STDAPI DllUnregisterServer() {
     wchar_t clsid[64] = {};
-    StringFromGUID2(CLSID_FormatBoyVirtualCameraDS, clsid, 64);
+    StringFromGUID2(CLSID_HenshinVirtualCameraDS, clsid, 64);
 
     wchar_t key[256];
     _snwprintf_s(key, _countof(key), _TRUNCATE,

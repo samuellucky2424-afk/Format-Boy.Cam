@@ -88,8 +88,8 @@ This project now supports generating that `download_url` from Supabase Storage.
 
 ### Recommended setup
 
-1. Create a bucket in Supabase Storage, for example `format-boy-updates`.
-2. Upload your Windows release file, for example `desktop/Format-Boy-Desktop-1.0.1.exe`.
+1. Create a bucket in Supabase Storage, for example `henshin-updates`.
+2. Upload your Windows release file, for example `desktop/Henshin-Desktop-1.0.1.exe`.
 3. Set these environment variables on the backend that serves `/api/version`:
 
 ```env
@@ -97,8 +97,8 @@ SUPABASE_URL=https://your-project-ref.supabase.co
 SUPABASE_SERVICE_ROLE_KEY=your_service_role_key
 DESKTOP_LATEST_VERSION=1.0.1
 DESKTOP_ARTIFACT_TYPE=portable
-DESKTOP_SUPABASE_BUCKET=format-boy-updates
-DESKTOP_SUPABASE_PATH=desktop/Format-Boy-Desktop-{version}.exe
+DESKTOP_SUPABASE_BUCKET=henshin-updates
+DESKTOP_SUPABASE_PATH=desktop/Henshin-Desktop-{version}.exe
 DESKTOP_SUPABASE_ACCESS=signed
 DESKTOP_SIGNED_URL_EXPIRES=7200
 DESKTOP_DOWNLOAD_SHA256=

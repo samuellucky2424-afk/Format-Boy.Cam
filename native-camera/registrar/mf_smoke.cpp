@@ -1,6 +1,6 @@
-// formatboy_cam_mf_smoke.exe
+// henshin_cam_mf_smoke.exe
 // Enumerates Windows video capture devices through Media Foundation,
-// selects the Format-Boy virtual camera, and attempts to read one sample.
+// selects the Henshin virtual camera, and attempts to read one sample.
 
 #define WIN32_LEAN_AND_MEAN
 #define NOMINMAX
@@ -13,7 +13,7 @@
 #include <cstdio>
 #include <string>
 
-#include "../formatboy_ids.h"
+#include "../henshin_ids.h"
 
 #pragma comment(lib, "mf.lib")
 #pragma comment(lib, "mfuuid.lib")

@@ -1,13 +1,35 @@
 import { ROUTES } from '@/lib/routes';
 
-export const GOOGLE_AUTH_MESSAGE_TYPE = 'format-boy-google-auth-complete';
+function isElectronRenderer(): boolean {
+  if (typeof window === 'undefined') return false;
 
-export function buildHashRouteUrl(path: string): string {
+  try {
+    const bridge = window as Window & { require?: (id: string) => unknown };
+    return Boolean(bridge.require?.('electron'));
+  } catch {
+    return false;
+  }
+}
+
+export function buildAuthCallbackUrl(): string {
   if (typeof window === 'undefined') {
-    return path;
+    return ROUTES.PUBLIC.AUTH_CALLBACK;
   }
 
-  return `${window.location.origin}${window.location.pathname}#${path}`;
+  if (isElectronRenderer()) {
+    return 'henshin://auth-callback';
+  }
+
+  return `${window.location.origin}${ROUTES.PUBLIC.AUTH_CALLBACK}`;
+}
+
+export function normalizeWebAuthCallbackLocation(): void {
+  if (typeof window === 'undefined' || window.location.pathname !== ROUTES.PUBLIC.AUTH_CALLBACK) {
+    return;
+  }
+
+  const callbackRoute = `/#${ROUTES.PUBLIC.AUTH_CALLBACK}${window.location.search}`;
+  window.history.replaceState(null, '', callbackRoute);
 }
 
 export function normalizeRedirectPath(path?: string | null): string {
@@ -16,24 +38,4 @@ export function normalizeRedirectPath(path?: string | null): string {
   }
 
   return path;
-}
-
-export function buildGoogleCallbackPath(nextPath: string = ROUTES.DEFAULT, popup = false): string {
-  const params = new URLSearchParams({
-    next: normalizeRedirectPath(nextPath),
-  });
-
-  if (popup) {
-    params.set('auth', 'popup');
-  }
-
-  return `${ROUTES.PUBLIC.AUTH_CALLBACK}?${params.toString()}`;
-}
-
-export function buildElectronCallbackUrl(nextPath: string = ROUTES.DEFAULT): string {
-  const params = new URLSearchParams({
-    next: normalizeRedirectPath(nextPath),
-  });
-
-  return `formatboy://auth/callback?${params.toString()}`;
 }

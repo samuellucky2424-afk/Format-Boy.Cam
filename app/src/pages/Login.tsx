@@ -1,22 +1,20 @@
-import { useState, useEffect } from 'react';
-import { Link, useLocation, useNavigate } from 'react-router-dom';
-import { Loader2, Eye, EyeOff } from 'lucide-react';
-import { Button } from '@/components/ui/button';
+﻿import { useState, useEffect } from 'react';
+import { useLocation, useNavigate } from 'react-router-dom';
+import { Loader2, Eye, EyeOff, MailCheck } from 'lucide-react';
+import { CosmicButton } from '@/components/ui/cosmic-button';
 import { Input } from '@/components/ui/input';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
+import { TextureButton } from '@/components/ui/texture-button';
 import { useAuth } from '@/context/AuthContext';
-import { GOOGLE_AUTH_MESSAGE_TYPE, normalizeRedirectPath } from '@/lib/auth';
 import { ROUTES } from '@/lib/routes';
 import { toast } from 'sonner';
 
 function Login() {
-  const { login, register, signInWithGoogle, loading, error, clearError } = useAuth();
+  const { login, loginWithGoogle, register, loading, error, clearError } = useAuth();
   const location = useLocation();
   const navigate = useNavigate();
   const isLogin = location.pathname !== ROUTES.PUBLIC.SIGNUP;
-  const authRedirectPath = normalizeRedirectPath(
-    (location.state as { from?: { pathname?: string } } | null)?.from?.pathname || ROUTES.DEFAULT
-  );
+  const verificationEmail = (location.state as { verificationEmail?: string } | null)?.verificationEmail;
   const [name, setName] = useState('');
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
@@ -33,27 +31,6 @@ function Login() {
     clearError();
   }, [clearError, isLogin]);
 
-  useEffect(() => {
-    const handleGoogleAuthComplete = (event: MessageEvent) => {
-      if (event.origin !== window.location.origin) {
-        return;
-      }
-
-      if (event.data?.type !== GOOGLE_AUTH_MESSAGE_TYPE) {
-        return;
-      }
-
-      toast.success('Google sign-in complete');
-      const nextPath = normalizeRedirectPath(
-        typeof event.data?.next === 'string' ? event.data.next : authRedirectPath
-      );
-      navigate(nextPath, { replace: true });
-    };
-
-    window.addEventListener('message', handleGoogleAuthComplete);
-    return () => window.removeEventListener('message', handleGoogleAuthComplete);
-  }, [authRedirectPath, navigate]);
-
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     
@@ -62,20 +39,17 @@ function Login() {
         await login(email, password);
         toast.success('Welcome back!');
       } else {
-        await register(email, name, password);
-        toast.success('Account created successfully!');
+        const result = await register(email, name, password);
+        if (result.requiresEmailConfirmation) {
+          navigate(ROUTES.PUBLIC.LOGIN, {
+            replace: true,
+            state: { verificationEmail: email },
+          });
+        } else {
+          toast.success('Account created successfully!');
+        }
       }
-    } catch (_err) {
-      // Error is handled by the auth context and shown via toast
-    }
-  };
-
-  const handleGoogleAuth = async () => {
-    clearError();
-
-    try {
-      await signInWithGoogle(authRedirectPath);
-    } catch (_err) {
+    } catch {
       // Error is handled by the auth context and shown via toast
     }
   };
@@ -85,154 +59,181 @@ function Login() {
     navigate(isLogin ? ROUTES.PUBLIC.SIGNUP : ROUTES.PUBLIC.LOGIN);
   };
 
+  const handleGoogleLogin = async () => {
+    try {
+      await loginWithGoogle();
+    } catch {
+      // Error is handled by the auth context and shown via toast
+    }
+  };
+
   return (
-    <div className="min-h-screen bg-[#0f0f10] flex items-center justify-center p-4">
+    <div className="mesh-bg min-h-screen flex items-center justify-center p-4">
       <div className="w-full max-w-[400px]">
         <div className="flex items-center justify-center gap-3 mb-8">
-          <div className="w-10 h-10 rounded-lg bg-[#1a1a1b] flex items-center justify-center overflow-hidden">
+          <div className="w-10 h-10 rounded-lg bg-panel flex items-center justify-center overflow-hidden">
             <img src="./logo.png" alt="Logo" className="w-full h-full object-cover" />
           </div>
-          <span className="text-xl font-semibold text-white tracking-tight">CALL ME</span>
+          <span className="text-xl font-semibold text-foreground tracking-tight">Henshin 変身</span>
         </div>
 
-        <Card className="bg-[#18181b] border-[#27272a]">
+        <Card>
           <CardHeader className="pb-6">
-            <CardTitle className="text-xl font-semibold text-white text-center">
-              {isLogin ? 'Sign in to your account' : 'Create your account'}
+            <CardTitle className="text-xl font-semibold text-foreground text-center">
+              {verificationEmail
+                ? 'Check your email'
+                : isLogin
+                  ? 'Sign in to your account'
+                  : 'Create your account'}
             </CardTitle>
           </CardHeader>
           <CardContent>
-            <Button
-              type="button"
-              onClick={handleGoogleAuth}
-              disabled={loading}
-              variant="outline"
-              className="w-full h-11 border-[#3f3f46] bg-[#202024] text-white hover:bg-[#27272a] hover:text-white"
-            >
-              {loading ? (
-                <span className="flex items-center gap-2">
-                  <Loader2 className="w-4 h-4 animate-spin" />
-                  Please wait...
-                </span>
-              ) : (
-                <span className="flex items-center gap-3">
-                  <svg width="18" height="18" viewBox="0 0 24 24" aria-hidden="true">
-                    <path fill="#EA4335" d="M12 10.2v3.9h5.4c-.2 1.3-.8 2.4-1.8 3.2l2.9 2.3c1.7-1.5 2.7-3.9 2.7-6.6 0-.6-.1-1.2-.2-1.8H12z" />
-                    <path fill="#34A853" d="M12 21c2.4 0 4.5-.8 6-2.1l-2.9-2.3c-.8.5-1.9.9-3.1.9-2.4 0-4.5-1.6-5.2-3.8l-3 .2v2.4C5.3 19 8.4 21 12 21z" />
-                    <path fill="#4A90E2" d="M6.8 13.7c-.2-.5-.3-1.1-.3-1.7s.1-1.2.3-1.7V7.9h-3C3.3 9.1 3 10.5 3 12s.3 2.9.8 4.1l3-.2v-2.2z" />
-                    <path fill="#FBBC05" d="M12 6.5c1.3 0 2.5.5 3.4 1.3l2.6-2.6C16.5 3.8 14.4 3 12 3 8.4 3 5.3 5 3.8 7.9l3 2.4c.7-2.2 2.8-3.8 5.2-3.8z" />
+            {verificationEmail ? (
+              <div className="text-center">
+                <div className="mx-auto flex size-16 items-center justify-center rounded-2xl border border-blue-500/20 bg-blue-500/10">
+                  <MailCheck className="size-8 text-blue-400" />
+                </div>
+                <p className="mt-5 text-sm leading-6 text-muted-foreground">
+                  We sent a confirmation link to
+                  <strong className="mt-1 block break-all text-foreground">{verificationEmail}</strong>
+                </p>
+                <p className="mt-3 text-sm leading-6 text-muted-foreground">
+                  Open the email and click the confirmation link. Henshin will finish verifying your account,
+                  then you can sign in.
+                </p>
+                <TextureButton
+                  type="button"
+                  className="mt-6 w-full"
+                  contentClassName="min-h-11 justify-center"
+                  onClick={() => navigate(ROUTES.PUBLIC.LOGIN, { replace: true, state: null })}
+                >
+                  Back to sign in
+                </TextureButton>
+              </div>
+            ) : (
+              <>
+                <TextureButton
+                  type="button"
+                  className="mb-5 w-full"
+                  contentClassName="min-h-11 justify-center gap-3"
+                  disabled={loading}
+                  onClick={handleGoogleLogin}
+                >
+                  <svg aria-hidden="true" viewBox="0 0 24 24" className="size-4">
+                    <path fill="#4285F4" d="M21.6 12.23c0-.71-.06-1.4-.18-2.07H12v3.92h5.38a4.6 4.6 0 0 1-2 3.02v2.54h3.24c1.9-1.75 2.98-4.33 2.98-7.41Z" />
+                    <path fill="#34A853" d="M12 22c2.7 0 4.98-.9 6.63-2.43l-3.24-2.54c-.9.6-2.05.96-3.39.96-2.61 0-4.82-1.76-5.61-4.13H3.04v2.62A10 10 0 0 0 12 22Z" />
+                    <path fill="#FBBC05" d="M6.39 13.86A6.01 6.01 0 0 1 6.08 12c0-.65.11-1.28.31-1.86V7.52H3.04A10 10 0 0 0 2 12c0 1.61.39 3.14 1.04 4.48l3.35-2.62Z" />
+                    <path fill="#EA4335" d="M12 6.01c1.47 0 2.79.51 3.83 1.5l2.87-2.88A9.64 9.64 0 0 0 12 2a10 10 0 0 0-8.96 5.52l3.35 2.62C7.18 7.77 9.39 6.01 12 6.01Z" />
                   </svg>
                   Continue with Google
-                </span>
-              )}
-            </Button>
+                </TextureButton>
 
-            <div className="relative my-6">
-              <div className="absolute inset-0 flex items-center">
-                <span className="w-full border-t border-[#27272a]" />
-              </div>
-              <div className="relative flex justify-center text-[11px] uppercase tracking-[0.16em]">
-                <span className="bg-[#18181b] px-3 text-[#71717a]">Or continue with email</span>
-              </div>
-            </div>
-
-            <form onSubmit={handleSubmit} className="space-y-4">
-              {!isLogin && (
-                <div className="space-y-2">
-                  <label className="text-sm font-medium text-[#a1a1aa]">Full Name</label>
-                  <Input
-                    type="text"
-                    placeholder="Jane Doe"
-                    value={name}
-                    onChange={(e) => setName(e.target.value)}
-                    className="h-11 bg-[#27272a] border-[#3f3f46] text-white placeholder:text-[#71717a]"
-                    disabled={loading}
-                    required={!isLogin}
-                  />
+                <div className="mb-5 flex items-center gap-3 text-xs uppercase tracking-[0.16em] text-muted-foreground">
+                  <span className="h-px flex-1 bg-border" />
+                  <span>or continue with email</span>
+                  <span className="h-px flex-1 bg-border" />
                 </div>
-              )}
-              <div className="space-y-2">
-                <label className="text-sm font-medium text-[#a1a1aa]">Email</label>
-                <Input
-                  type="email"
-                  placeholder="you@company.com"
-                  value={email}
-                  onChange={(e) => setEmail(e.target.value)}
-                  className="h-11 bg-[#27272a] border-[#3f3f46] text-white placeholder:text-[#71717a]"
-                  disabled={loading}
-                  required
-                />
-              </div>
-              <div className="space-y-2">
-                <div className="flex items-center justify-between">
-                  <label className="text-sm font-medium text-[#a1a1aa]">Password</label>
-                  {isLogin && (
-                    <button 
-                      type="button" 
-                      className="text-sm text-[#2563eb] hover:text-[#3b82f6]"
-                      onClick={() => toast.info('Password reset coming soon')}
-                    >
-                      Forgot password?
-                    </button>
+
+                <form onSubmit={handleSubmit} className="space-y-4">
+                  {!isLogin && (
+                    <div className="space-y-2">
+                      <label className="text-sm font-medium text-muted-foreground">Full Name</label>
+                      <Input
+                        type="text"
+                        placeholder="Jane Doe"
+                        value={name}
+                        onChange={(e) => setName(e.target.value)}
+                        className="h-11 border-input bg-panel text-foreground placeholder:text-muted-foreground/60"
+                        disabled={loading}
+                        required={!isLogin}
+                      />
+                    </div>
                   )}
-                </div>
-                <div className="relative">
-                  <Input
-                    type={showPassword ? 'text' : 'password'}
-                    placeholder="Enter your password"
-                    value={password}
-                    onChange={(e) => setPassword(e.target.value)}
-                    className="h-11 bg-[#27272a] border-[#3f3f46] text-white placeholder:text-[#71717a] pr-10"
+                  <div className="space-y-2">
+                    <label className="text-sm font-medium text-muted-foreground">Email</label>
+                    <Input
+                      type="email"
+                      placeholder="you@company.com"
+                      value={email}
+                      onChange={(e) => setEmail(e.target.value)}
+                      className="h-11 border-input bg-panel text-foreground placeholder:text-muted-foreground/60"
+                      disabled={loading}
+                      required
+                    />
+                  </div>
+                  <div className="space-y-2">
+                    <div className="flex items-center justify-between">
+                      <label className="text-sm font-medium text-muted-foreground">Password</label>
+                      {isLogin && (
+                        <TextureButton
+                          variant="minimal"
+                          size="sm"
+                          className="!bg-transparent"
+                          contentClassName="min-h-0 !bg-transparent px-0 py-0 text-blue-400 hover:text-blue-300"
+                          onClick={() => toast.info('Password reset coming soon')}
+                        >
+                          Forgot password?
+                        </TextureButton>
+                      )}
+                    </div>
+                    <div className="relative">
+                      <Input
+                        type={showPassword ? 'text' : 'password'}
+                        placeholder="Enter your password"
+                        value={password}
+                        onChange={(e) => setPassword(e.target.value)}
+                        className="h-11 border-input bg-panel text-foreground placeholder:text-muted-foreground/60 pr-10"
+                        disabled={loading}
+                        required
+                        minLength={6}
+                      />
+                      <TextureButton
+                        variant="icon"
+                        size="icon"
+                        onClick={() => setShowPassword(!showPassword)}
+                        aria-label={showPassword ? 'Hide password' : 'Show password'}
+                        className="absolute right-2 top-1/2 -translate-y-1/2 !bg-transparent"
+                        contentClassName="!bg-transparent"
+                      >
+                        {showPassword ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+                      </TextureButton>
+                    </div>
+                  </div>
+                  <CosmicButton
+                    as="button"
+                    type="submit"
                     disabled={loading}
-                    required
-                    minLength={6}
-                  />
-                  <button
-                    type="button"
-                    onClick={() => setShowPassword(!showPassword)}
-                    className="absolute right-3 top-1/2 -translate-y-1/2 text-[#71717a] hover:text-white transition-colors"
+                    className="w-full"
+                    contentClassName="min-h-11"
                   >
-                    {showPassword ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
-                  </button>
-                </div>
-              </div>
-              <Button
-                type="submit"
-                disabled={loading}
-                className="w-full h-11 bg-[#2563eb] hover:bg-[#1d4ed8] text-white font-medium disabled:opacity-50"
-              >
-                {loading ? (
-                  <span className="flex items-center gap-2">
-                    <Loader2 className="w-4 h-4 animate-spin" />
-                    Please wait...
-                  </span>
-                ) : (
-                  isLogin ? 'Sign In' : 'Create Account'
-                )}
-              </Button>
-            </form>
+                    {loading ? (
+                      <span className="flex items-center gap-2">
+                        <Loader2 className="w-4 h-4 animate-spin" />
+                        Please wait...
+                      </span>
+                    ) : (
+                      isLogin ? 'Sign In' : 'Create Account'
+                    )}
+                  </CosmicButton>
+                </form>
 
-            <div className="mt-6 text-center">
-              <span className="text-sm text-[#71717a]">
-                {isLogin ? "Don't have an account? " : 'Already have an account? '}
-                <button
-                  type="button"
-                  onClick={toggleMode}
-                  className="text-[#2563eb] hover:text-[#3b82f6] font-medium"
-                  disabled={loading}
-                >
-                  {isLogin ? 'Create account' : 'Sign in'}
-                </button>
-              </span>
-            </div>
-            <div className="mt-4 text-center">
-              <Link 
-                to="/subscription" 
-                className="text-sm text-[#71717a] hover:text-white transition-colors"
-              >
-                View pricing plans
-              </Link>
-            </div>
+                <div className="mt-6 text-center">
+                  <span className="text-sm text-muted-foreground">
+                    {isLogin ? "Don't have an account? " : 'Already have an account? '}
+                    <TextureButton
+                      variant="minimal"
+                      size="sm"
+                      onClick={toggleMode}
+                      className="!bg-transparent"
+                      contentClassName="min-h-0 !bg-transparent px-0 py-0 text-blue-400 hover:text-blue-300"
+                      disabled={loading}
+                    >
+                      {isLogin ? 'Create account' : 'Sign in'}
+                    </TextureButton>
+                  </span>
+                </div>
+              </>
+            )}
           </CardContent>
         </Card>
       </div>

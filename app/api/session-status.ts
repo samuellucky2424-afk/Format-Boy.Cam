@@ -1,89 +1,100 @@
 // @ts-nocheck
-import { supabaseAdmin, supabaseAdminConfigError } from './supabase.js';
-import { getWalletByUserId } from './credit-utils.js';
+import { requireAuthorizedUser, sendApiError } from './auth.js';
+import { getWalletByUserId } from '../server/credit-utils.js';
+import { supabaseAdmin } from './supabase.js';
 
-const CREDITS_PER_SECOND = 2;
-const MAX_SESSION_DURATION = 600;
-
-function hasRealtimeCredential(metadata) {
-  return typeof metadata?.realtime_credential_issued_at === 'string'
-    && Number.isFinite(Date.parse(metadata.realtime_credential_issued_at));
-}
+const MAX_SESSION_SECONDS = 600;
 
 export default async function handler(req, res) {
-  res.setHeader("Access-Control-Allow-Origin", "*");
-  res.setHeader("Access-Control-Allow-Methods", "GET, OPTIONS");
-  res.setHeader("Access-Control-Allow-Headers", "Content-Type, Authorization");
-  
+  res.setHeader('Access-Control-Allow-Origin', '*');
+  res.setHeader('Access-Control-Allow-Methods', 'GET, OPTIONS');
+  res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization');
+  res.setHeader('Cache-Control', 'private, no-store');
+
   if (req.method === 'OPTIONS') return res.status(200).end();
+  if (req.method !== 'GET') return res.status(405).json({ error: 'Method not allowed' });
 
-  const userId = req.query.userId || req.query.id;
-
-  if (!userId) return res.status(400).json({ error: 'User ID is required' });
-  if (!supabaseAdmin) return res.status(503).json({ error: supabaseAdminConfigError });
+  const userId = String(req.query?.userId || '').trim();
+  const sessionId = String(req.query?.sessionId || '').trim();
+  if (!sessionId) return res.status(400).json({ error: 'Session ID is required' });
 
   try {
+    await requireAuthorizedUser(req, userId);
     const wallet = await getWalletByUserId(userId, { createIfMissing: true });
-    if (!wallet) {
-      return res.status(404).json({ error: 'Wallet not found' });
+    const { data: session, error: lookupError } = await supabaseAdmin
+      .from('sessions')
+      .select('id, provider, pro_license_id, status, billable_started_at, credits_per_second, seconds_used, credits_used')
+      .eq('id', sessionId)
+      .eq('user_id', userId)
+      .maybeSingle();
+    if (lookupError) throw lookupError;
+    if (!session) return res.status(404).json({ error: 'Session not found' });
+
+    if (session.provider === 'fal') {
+      const { data: license, error: licenseError } = await supabaseAdmin
+        .from('pro_licenses')
+        .select('status')
+        .eq('id', session.pro_license_id)
+        .eq('user_id', userId)
+        .maybeSingle();
+      if (licenseError) throw licenseError;
+      if (license?.status !== 'active') {
+        return res.json({
+          secondsUsed: Number(session.seconds_used || 0),
+          creditsUsed: Number(session.credits_used || 0),
+          remainingCredits: wallet.credits,
+          shouldStop: true,
+          forceEnd: true,
+          reason: 'pro_license_inactive',
+        });
+      }
     }
 
-    const actualCredits = wallet.credits;
-
-    const { data: activeSession } = await supabaseAdmin
-      .from('sessions').select('*').eq('user_id', userId).eq('status', 'active')
-      .order('created_at', { ascending: false }).limit(1).single();
-
-    if (!activeSession) {
-      return res.json({ secondsUsed: 0, creditsUsed: 0, remainingCredits: actualCredits, credits: actualCredits, shouldStop: false, forceEnd: false });
+    if (session.status !== 'active') {
+      return res.json({
+        secondsUsed: Number(session.seconds_used || 0),
+        creditsUsed: Number(session.credits_used || 0),
+        remainingCredits: wallet.credits,
+        shouldStop: true,
+      });
     }
 
-    const metadata = activeSession?.metadata && typeof activeSession.metadata === 'object'
-      ? activeSession.metadata
-      : {};
-
-    try {
-      const nowIso = new Date().toISOString();
-
-      await supabaseAdmin
-        .from('sessions')
-        .update({ metadata: { ...metadata, last_heartbeat: nowIso } })
-        .eq('id', activeSession.id)
-        .eq('status', 'active');
-    } catch (heartbeatError) {
-      console.error('Failed to update session heartbeat:', heartbeatError);
+    if (!session.billable_started_at) {
+      return res.json({
+        secondsUsed: 0,
+        creditsUsed: 0,
+        remainingCredits: wallet.credits,
+        shouldStop: wallet.credits <= 0,
+      });
     }
 
-    let startTimeStr = typeof activeSession?.start_time === 'string'
-      ? activeSession.start_time
-      : activeSession?.start_time
-        ? new Date(activeSession.start_time).toISOString()
-        : new Date().toISOString();
-    if (!startTimeStr.endsWith('Z') && !startTimeStr.includes('+')) {
-      startTimeStr = startTimeStr.replace(' ', 'T') + 'Z';
-    }
-    const startTime = new Date(startTimeStr).getTime();
-    const credentialIssuedMs = hasRealtimeCredential(metadata)
-      ? Date.parse(metadata.realtime_credential_issued_at)
-      : NaN;
-    const billableStartMs = Number.isFinite(credentialIssuedMs)
-      ? Math.max(startTime, credentialIssuedMs)
-      : startTime;
-    
-    // Prevent negative seconds if there is a tiny clock drift
-    const elapsedSeconds = Math.min(
-      MAX_SESSION_DURATION,
-      Math.max(0, Math.floor((Date.now() - billableStartMs) / 1000))
+    const heartbeatAt = new Date().toISOString();
+    const { error: heartbeatError } = await supabaseAdmin
+      .from('sessions')
+      .update({ last_heartbeat_at: heartbeatAt })
+      .eq('id', sessionId)
+      .eq('user_id', userId)
+      .eq('status', 'active');
+    if (heartbeatError) throw heartbeatError;
+
+    const secondsUsed = Math.min(
+      MAX_SESSION_SECONDS,
+      Math.max(0, Math.floor((Date.now() - Date.parse(session.billable_started_at)) / 1000)),
     );
-    const cost = Math.round(elapsedSeconds * CREDITS_PER_SECOND);
-    
-    const remainingCredits = Math.max(0, actualCredits - cost);
-    const shouldStop = remainingCredits <= 0 || elapsedSeconds >= MAX_SESSION_DURATION;
-    const forceEnd = remainingCredits <= 0;
+    const rate = Number(session.credits_per_second);
+    if (!Number.isFinite(rate) || rate < 0) throw new Error('Session has an invalid billing rate');
+    const accruedCredits = Math.round(secondsUsed * rate);
+    const creditsUsed = Math.min(wallet.credits, accruedCredits);
+    const remainingCredits = Math.max(0, wallet.credits - creditsUsed);
 
-    res.json({ secondsUsed: elapsedSeconds, creditsUsed: cost, cost, remainingCredits, credits: remainingCredits, shouldStop, forceEnd });
+    return res.json({
+      secondsUsed,
+      creditsUsed,
+      remainingCredits,
+      creditsPerSecond: rate,
+      shouldStop: accruedCredits >= wallet.credits || secondsUsed >= MAX_SESSION_SECONDS,
+    });
   } catch (error) {
-    console.error('Session status error:', error);
-    res.status(500).json({ error: 'Failed to fetch credits' });
+    return sendApiError(res, error, 'Failed to fetch session status');
   }
 }

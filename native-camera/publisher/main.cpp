@@ -1,4 +1,4 @@
-// formatboy_cam_pipe_publisher — reads BGRA frames from stdin (written by
+// henshin_cam_pipe_publisher — reads BGRA frames from stdin (written by
 // Electron) and writes them to the file bridge for the MF/DS camera DLLs.
 //
 // Stdin protocol (40-byte PipeFrameHeader followed by raw BGRA payload):
@@ -14,8 +14,9 @@
 #include <cstring>
 #include <vector>
 
-#include "formatboy_publisher.h"
-#include "../formatboy_protocol.h"
+#include "henshin_publisher.h"
+#include "../henshin_protocol.h"
+#include "../henshin_ids.h"
 
 // ---------------------------------------------------------------------------
 // ReadAll — blocks until exactly `count` bytes have been read from `h`.
@@ -42,10 +43,16 @@ int main() {
     HANDLE hStdin = GetStdHandle(STD_INPUT_HANDLE);
     if (hStdin == INVALID_HANDLE_VALUE || hStdin == nullptr) return 1;
 
-    FormatBoyPublisher publisher;
-    bool               opened = false;
+    HenshinPublisher publisher;
+    std::vector<uint8_t> pixelBuf(
+        static_cast<size_t>(kDefaultWidth) * kDefaultHeight * 4, 0);
 
-    std::vector<uint8_t> pixelBuf;
+    if (!publisher.Open(kDefaultWidth, kDefaultHeight, kDefaultFpsNum, kDefaultFpsDen) ||
+        !publisher.WriteFrame(pixelBuf.data(), static_cast<uint32_t>(pixelBuf.size()), 0)) {
+        std::fprintf(stderr, "[vcam] Could not initialize the frame bridge (error %lu)\n",
+                     GetLastError());
+        return 2;
+    }
 
     for (;;) {
         // ----------------------------------------------------------------
@@ -57,17 +64,10 @@ int main() {
         // Validate magic & version
         if (ph.magic != kFrameMagic || ph.version != kProtocolVersion) break;
 
-        // Sanity-check payload size (max ~8K × 8K × 4 bytes)
-        if (ph.payloadBytes == 0 || ph.payloadBytes > 256u * 1024u * 1024u) break;
-
-        // ----------------------------------------------------------------
-        // 2. Open the bridge on the first valid frame
-        // ----------------------------------------------------------------
-        if (!opened) {
-            // Even if Open fails (e.g. permission issue) we keep draining stdin
-            // so Electron's write end never blocks.
-            opened = publisher.Open(ph.width, ph.height, ph.fps, 1);
-        }
+        const uint32_t expectedBytes = kDefaultWidth * kDefaultHeight * 4;
+        if (ph.width != kDefaultWidth || ph.height != kDefaultHeight ||
+            ph.stride != kDefaultWidth * 4 || ph.fps != kDefaultFpsNum ||
+            ph.payloadBytes != expectedBytes) break;
 
         // ----------------------------------------------------------------
         // 3. Read pixel payload
@@ -78,11 +78,9 @@ int main() {
         // ----------------------------------------------------------------
         // 4. Write to file bridge
         // ----------------------------------------------------------------
-        if (opened) {
-            publisher.WriteFrame(pixelBuf.data(),
+        if (!publisher.WriteFrame(pixelBuf.data(),
                                   ph.payloadBytes,
-                                  ph.timestampHundredsOfNs);
-        }
+                                  ph.timestampHundredsOfNs)) break;
     }
 
     publisher.Close();
