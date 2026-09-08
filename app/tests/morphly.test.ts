@@ -9,11 +9,17 @@ const upstreamBody = { session_id: 'fixture-session', session_token: 'opaque-ses
 function fixture(overrides: Record<string, unknown> = {}) {
   let fetches = 0;
   let forwarded: Record<string, unknown> | null = null;
+  const activations: Record<string, unknown>[] = [];
+  let activationError: { message: string } | null = null;
   const admin = {
     auth: { getUser: async () => ({ data: { user: { id: 'user-1', email: 'user@example.test', email_confirmed_at: 'verified' } } }),
       admin: { getUserById: async () => ({ data: { user: { id: 'canonical', email: 'user@example.test', email_confirmed_at: 'verified' } } }) } },
     from: () => {
-      const query = { select: () => query, eq: () => query, order: () => query, limit: () => query, maybeSingle: async () => ({ data: { id: 'app-session' } }) };
+      const query = { select: () => query, eq: () => query, order: () => query, limit: () => query, maybeSingle: async () => ({ data: { id: 'app-session', metadata: { existing: true } } }),
+        update: (value: Record<string, unknown>) => {
+          activations.push(value);
+          return { eq: () => ({ eq: async () => ({ error: activationError }) }) };
+        } };
       return query;
     },
     rpc: async () => ({ data: true }),
@@ -30,7 +36,7 @@ function fixture(overrides: Record<string, unknown> = {}) {
       assert.ok((init.headers as Record<string, string>)['idempotency-key']);
       return Response.json(upstreamBody, { status: 201 });
     }, ...overrides };
-  return { req, res, options, admin, fetches: () => fetches, forwarded: () => forwarded };
+  return { req, res, options, admin, activations, failActivation: () => { activationError = { message: 'fixture failure' }; }, fetches: () => fetches, forwarded: () => forwarded };
 }
 
 test('proxy forwards full metered response, legacy model, exact origin and status without caching', async () => {
@@ -49,6 +55,24 @@ test('new requests default to Morphly model; canonical caller identity remains a
   await handler(f.req, f.res, f.options);
   assert.equal(f.res.statusCode, 201);
   assert.equal(f.forwarded()?.model, 'morphly-realtime');
+});
+test('app billing activates only after a successful Morphly credential response', async () => {
+  const f = fixture();
+  await handler(f.req, f.res, f.options);
+  assert.equal(f.activations.length, 1);
+  const metadata = f.activations[0].metadata as Record<string, unknown>;
+  assert.equal(metadata.existing, true);
+  assert.ok(Number.isFinite(Date.parse(String(metadata.realtime_credential_issued_at))));
+  const rejected = fixture({ fetchImplementation: async () => Response.json({ code: 'INSUFFICIENT_CREDITS' }, { status: 402 }) });
+  await handler(rejected.req, rejected.res, rejected.options);
+  assert.equal(rejected.res.statusCode, 402);
+  assert.equal(rejected.activations.length, 0);
+});
+test('app billing activation failure returns the existing safe failure code', async () => {
+  const f = fixture(); f.failActivation();
+  await handler(f.req, f.res, f.options);
+  assert.equal(f.res.statusCode, 500);
+  assert.deepEqual(f.res.body, { error: 'Could not prepare the realtime session.', code: 'SESSION_ACTIVATION_FAILED' });
 });
 test('missing login and foreign origin cannot create a Morphly session', async () => {
   for (const mutate of [(f: ReturnType<typeof fixture>) => { f.req.headers.authorization = ''; }, (f: ReturnType<typeof fixture>) => { f.req.headers.origin = 'https://attacker.test'; }, (f: ReturnType<typeof fixture>) => { f.req.body.origin = 'https://attacker.test'; }]) {

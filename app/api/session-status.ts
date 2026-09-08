@@ -5,6 +5,11 @@ import { getWalletByUserId } from './credit-utils.js';
 const CREDITS_PER_SECOND = 2;
 const MAX_SESSION_DURATION = 600;
 
+function hasRealtimeCredential(metadata) {
+  return typeof metadata?.realtime_credential_issued_at === 'string'
+    && Number.isFinite(Date.parse(metadata.realtime_credential_issued_at));
+}
+
 export default async function handler(req, res) {
   res.setHeader("Access-Control-Allow-Origin", "*");
   res.setHeader("Access-Control-Allow-Methods", "GET, OPTIONS");
@@ -33,11 +38,12 @@ export default async function handler(req, res) {
       return res.json({ secondsUsed: 0, creditsUsed: 0, remainingCredits: actualCredits, credits: actualCredits, shouldStop: false, forceEnd: false });
     }
 
+    const metadata = activeSession?.metadata && typeof activeSession.metadata === 'object'
+      ? activeSession.metadata
+      : {};
+
     try {
       const nowIso = new Date().toISOString();
-      const metadata = activeSession?.metadata && typeof activeSession.metadata === 'object'
-        ? activeSession.metadata
-        : {};
 
       await supabaseAdmin
         .from('sessions')
@@ -57,11 +63,17 @@ export default async function handler(req, res) {
       startTimeStr = startTimeStr.replace(' ', 'T') + 'Z';
     }
     const startTime = new Date(startTimeStr).getTime();
+    const credentialIssuedMs = hasRealtimeCredential(metadata)
+      ? Date.parse(metadata.realtime_credential_issued_at)
+      : NaN;
+    const billableStartMs = Number.isFinite(credentialIssuedMs)
+      ? Math.max(startTime, credentialIssuedMs)
+      : startTime;
     
     // Prevent negative seconds if there is a tiny clock drift
     const elapsedSeconds = Math.min(
       MAX_SESSION_DURATION,
-      Math.max(0, Math.floor((Date.now() - startTime) / 1000))
+      Math.max(0, Math.floor((Date.now() - billableStartMs) / 1000))
     );
     const cost = Math.round(elapsedSeconds * CREDITS_PER_SECOND);
     

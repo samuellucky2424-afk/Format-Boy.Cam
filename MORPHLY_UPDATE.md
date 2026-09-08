@@ -31,6 +31,8 @@ Packaged Electron now serves its bundled public assets at `http://localhost:5173
 - `app/tests/morphly-browser.config.ts`, `app/tests/morphly-browser.html`, `app/tests/morphly-browser.tsx` — isolated browser fixture using fake auth, API, SDK, and black canvas media. Never included in the production build entry points.
 - `MORPHLY_UPDATE.md` — this handoff.
 
+The newer main-branch billing changes were preserved: app billing is activated only after Morphly issues a credential, and provider failures do not activate it. The merged route retains safe diagnostics and uses the verified admin client. The local installer predates this server-only merge; its renderer is unchanged.
+
 Pre-existing edits to `app/vite.config.ts`, unrelated logs/scripts, and the root `vercel.json` were not changed by this update.
 
 ## Server and hosting settings
@@ -120,7 +122,7 @@ cmake --build native-camera/build --config Release
 ## Actual verification
 
 - Production Vite build passed. It still reports the existing bundle-size and old Browserslist-data warnings.
-- All 15 focused tests passed: full response/status, both model names, authenticated canonical caller, denied login/account/origin, duration validation, insufficient app credits, per-user limit denial, stable idempotency, 409, setup-required error, pending-stop object retention, navigation during connection, app cleanup retry, post-stop balances, safe diagnostics, and localhost asset restrictions.
+- All 17 focused tests passed (including two billing-activation regression tests added when merging the newer main branch): full response/status, both model names, authenticated canonical caller, denied login/account/origin, duration validation, insufficient app credits, per-user limit denial, stable idempotency, 409, setup-required error, pending-stop object retention, navigation during connection, app cleanup retry, post-stop balances, safe diagnostics, and localhost asset restrictions.
 - Targeted frontend lint passed. Repository-wide lint has existing failures, including the route's existing `@ts-nocheck` convention. The broader TypeScript check still has existing errors in AdminDashboard, Subscription, and VirtualCameraService; no errors were reported in the changed Morphly frontend files.
 - Browser fixture: black output reached live, double Start produced only one connection, Start disabled while live, authenticated headers used, prompt changed without reconnecting, four billing fields appeared, failed Stop retained session/disabled Start, Retry Stop confirmed on the same object, pending stop survived navigation, camera denial created no additional simulated SDK session, and simulated HTTP 402 showed credit feedback without an SDK connection. Layout inspected at desktop widths including 800 × 600.
 - Final built application served by the new localhost server loaded its normal sign-in screen and controls at `http://localhost:5173` with no reported page errors. No real sign-in or stream was attempted.

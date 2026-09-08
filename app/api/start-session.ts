@@ -8,6 +8,11 @@ const MAX_SESSION_DURATION = 600;
 const HEARTBEAT_GRACE_SECONDS = 3;
 const MORPHLY_API_KEY = process.env.MORPHLY_API_KEY;
 
+function hasRealtimeCredential(metadata) {
+  return typeof metadata?.realtime_credential_issued_at === 'string'
+    && Number.isFinite(Date.parse(metadata.realtime_credential_issued_at));
+}
+
 async function closeActiveSession(userId, activeSession) {
   try {
     const wallet = await getWalletByUserId(userId, { createIfMissing: true });
@@ -27,18 +32,27 @@ async function closeActiveSession(userId, activeSession) {
     const metadata = activeSession?.metadata && typeof activeSession.metadata === 'object'
       ? activeSession.metadata
       : {};
+    const realtimeCredentialIssued = hasRealtimeCredential(metadata);
+    const credentialIssuedMs = realtimeCredentialIssued
+      ? Date.parse(metadata.realtime_credential_issued_at)
+      : NaN;
+    const billableStartMs = Number.isFinite(credentialIssuedMs)
+      ? Math.max(startTime, credentialIssuedMs)
+      : startTime;
 
     const lastHeartbeatRaw = metadata?.last_heartbeat;
     const lastHeartbeatMs = typeof lastHeartbeatRaw === 'string' ? new Date(lastHeartbeatRaw).getTime() : NaN;
 
     const nowMs = Date.now();
-    const maxEndMs = startTime + MAX_SESSION_DURATION * 1000;
+    const maxEndMs = billableStartMs + MAX_SESSION_DURATION * 1000;
 
-    const billingEndMs = Number.isFinite(lastHeartbeatMs)
-      ? Math.min(nowMs, lastHeartbeatMs + HEARTBEAT_GRACE_SECONDS * 1000, maxEndMs)
-      : Math.min(startTime, maxEndMs);
+    const billingEndMs = !realtimeCredentialIssued
+      ? billableStartMs
+      : Number.isFinite(lastHeartbeatMs)
+        ? Math.min(nowMs, lastHeartbeatMs + HEARTBEAT_GRACE_SECONDS * 1000, maxEndMs)
+        : Math.min(startTime, maxEndMs);
 
-    const billableMs = Math.max(0, billingEndMs - startTime);
+    const billableMs = Math.max(0, billingEndMs - billableStartMs);
     const elapsedSeconds = Math.floor(billableMs / 1000);
     const creditsPerSecond = Number.isFinite(activeSession?.credits_per_second)
       ? activeSession.credits_per_second
@@ -55,7 +69,10 @@ async function closeActiveSession(userId, activeSession) {
         cost: finalCost,
         seconds_used: elapsedSeconds,
         credits_used: finalCost,
-        status: 'ended'
+        status: 'ended',
+        metadata: realtimeCredentialIssued
+          ? metadata
+          : { ...metadata, ended_without_realtime_credential_at: new Date(nowMs).toISOString() },
       })
       .eq('id', activeSession.id).eq('status', 'active');
 
