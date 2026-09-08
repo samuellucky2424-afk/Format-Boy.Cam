@@ -7,6 +7,9 @@ import dotenv from 'dotenv';
 import fs from 'fs';
 import { spawn, execFile } from 'child_process';
 import { registerUpdaterIpc, scheduleBackgroundUpdateCheck } from './updater.js';
+import { DESKTOP_ORIGIN, startDesktopServer } from './desktop-server.js';
+
+let desktopServer = null;
 
 // ---------------------------------------------------------------------------
 // Virtual Camera — pipe publisher process + registration
@@ -368,7 +371,7 @@ function createWindow() {
   });
 
   mainWindow.webContents.setWindowOpenHandler(({ url }) => {
-    if (url.includes('#/preview')) {
+    if (url.startsWith(`${DESKTOP_ORIGIN}/`) && new URL(url).hash === '#/preview') {
       return {
         action: 'allow',
         overrideBrowserWindowOptions: {
@@ -391,8 +394,7 @@ function createWindow() {
   });
 
   if (app.isPackaged) {
-    // Ensure routing works for nested paths if hash router isn't used
-    mainWindow.loadFile(path.join(__dirname, '../dist/index.html'));
+    mainWindow.loadURL(DESKTOP_ORIGIN);
   } else {
     mainWindow.loadURL('http://localhost:5173');
   }
@@ -492,9 +494,18 @@ ipcMain.handle('vcam-status', () => ({ ready: vcamPublisherReady }));
 registerUpdaterIpc();
 
 app.isQuitting = false;
-app.on('before-quit', () => { app.isQuitting = true; stopVCamPublisher(); });
+app.on('before-quit', () => { app.isQuitting = true; stopVCamPublisher(); desktopServer?.close(); });
 
 app.whenReady().then(async () => {
+  if (app.isPackaged) {
+    try {
+      desktopServer = await startDesktopServer(path.join(__dirname, '../dist'));
+    } catch {
+      electronPkg.dialog.showErrorBox('Morphly desktop startup', 'Could not open localhost:5173. Close any other app using port 5173, then restart CALL ME.');
+      app.quit();
+      return;
+    }
+  }
   // Request camera access inherently for WebRTC dependencies
   if (process.platform === 'darwin') {
     await systemPreferences.askForMediaAccess('camera');

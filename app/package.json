@@ -40,6 +40,7 @@
         "dev": "vite",
         "build": "cross-env NODE_OPTIONS=--max-old-space-size=2048 vite build",
         "lint": "eslint .",
+        "test:morphly": "tsx --test tests/morphly*.test.ts",
         "preview": "vite preview",
         "electron:dev": "electron .",
         "electron:build": "npm run build && electron-builder --win",

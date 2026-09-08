@@ -1,0 +1,147 @@
+# Morphly integration update
+
+## Findings and changes
+
+The integration already imported `https://morphly.fun/sdk/morphly.js` directly with Vite's `@vite-ignore`, used `/v1/realtime/sessions`, and forwarded the full session response. There is no installed or self-hosted Morphly SDK to replace. The hosted SDK and its relative runtime module returned HTTP 200 with CORS support and `public, max-age=0, must-revalidate`. No application service worker or SDK cache was found. The hosted module was also imported successfully in a browser without connecting a stream.
+
+The screenshot's error came from the application's own first-frame timer. It started before SDK loading and session creation, while a detached pixel probe withheld output until it found bright pixels. The probe could reject a valid dark video and had overlapping timeout/cleanup paths. The app now passes the mounted, muted, autoplay, inline output video directly to the SDK and checks real video readiness after connection. A black simulated camera stream passed the browser test. Real transformed output still requires the live test below.
+
+The token route previously trusted a user ID and body origin, had wildcard CORS, lacked per-user rate limiting/no-store, silently rounded/clamped durations, and replaced upstream 5xx codes with a generic message. It now verifies the existing Supabase login and canonical account ownership, allows exact configured origins, validates integer durations from 1 to 300 seconds, uses an atomic database limit of three attempts per user per minute, and forwards the complete upstream JSON and HTTP status. Credentials remain opaque. Retryable HTTP failures reuse one idempotency key; 409 and REALTIME_SETUP_REQUIRED terminate retries. No replacement-session loop is added.
+
+Both `lucy-2.5` and `morphly-realtime` requests remain accepted. New dashboard sessions request `morphly-realtime` for 30 seconds. Existing query/body `userId` callers and `/api/morphly-token` / `/api/start-session?action=morphly-token` routes remain supported, with a verified Supabase bearer token now required.
+
+Start is guarded synchronously. Camera capture/permission is requested only from Start; device discovery does not open a temporary camera on mount. Prompt edits use `session.setPrompt`, while reference-image updates retain the existing `session.set` path. Stop awaits the SDK, retains the exact session on failure, and disables Start until confirmation. A module-owned session survives route changes, with Retry Stop available on return or in the notification. Caller-owned media tracks are released. Delayed events from an older session cannot affect a newer attempt. The SDK owns its heartbeats and Morphly stop calls.
+
+The app displays Morphly `available_credits`, `reserved_credits`, `charged_credits`, and `billable_seconds` independently, retaining the last reported values after Stop. It explains reservation and pending settlement. The existing app wallet, app session authorization, server billing policy, image updates, virtual camera, and preview features remain in place; app credits are labeled separately. No browser-side credit deduction or derived wallet countdown was added.
+
+Packaged Electron now serves its bundled public assets at `http://localhost:5173`, bound to loopback, with host/origin checks, path restrictions, and no-store. It fails visibly if that port is occupied rather than loading an unknown service or selecting an unconfigured origin. No secret is served. Because the origin changes from `file://`, users should sign in again on first launch; OAuth still uses the existing callback protocol.
+
+## Files changed
+
+- `app/server/morphly-token.ts` — authenticated, metered session proxy; existing local retry changes preserved.
+- `app/src/pages/Dashboard.tsx` — SDK output, authenticated token headers, lifecycle, actionable errors, billing display, wrapping controls.
+- `app/src/lib/morphly-session.ts` — session ownership, pending stop, balance and safe diagnostic helpers.
+- `app/electron/main.js`, `app/electron/desktop-server.js` — packaged localhost origin.
+- `app/.env.example` — origin configuration.
+- `app/vercel.json` — no-store token response and revalidating HTML headers; routes preserved.
+- `app/package.json` — `test:morphly` command; no new SDK dependency or version.
+- `supabase/migrations/20260908131521_morphly_session_rate_limit.sql` — service-role-only rate limit table/function, RLS enabled, no credential storage.
+- `app/scripts/check-morphly.mjs` — free server-side key validation with allowlisted diagnostic output.
+- `app/tests/morphly.test.ts`, `app/tests/morphly-desktop.test.ts` — focused automated tests.
+- `app/tests/morphly-browser.config.ts`, `app/tests/morphly-browser.html`, `app/tests/morphly-browser.tsx` — isolated browser fixture using fake auth, API, SDK, and black canvas media. Never included in the production build entry points.
+- `MORPHLY_UPDATE.md` — this handoff.
+
+Pre-existing edits to `app/vite.config.ts`, unrelated logs/scripts, and the root `vercel.json` were not changed by this update.
+
+## Server and hosting settings
+
+Enter secrets directly in your server environment or hosting settings, never in chat or public `VITE_` variables.
+
+| Variable | Value/purpose |
+| --- | --- |
+| `MORPHLY_API_KEY` | Existing permanent server key, with `realtime:create` scope and each exact allowed origin below. |
+| `APP_ORIGIN` | Exact HTTPS website origin, e.g. `https://format-boy-cam.vercel.app`; use `http://localhost:5173` for local-only development. No path or trailing slash. |
+| `APP_DESKTOP_ORIGIN` | Optional additional exact desktop origin: `http://localhost:5173`. Allow it on the Morphly key as well. |
+| `SUPABASE_URL` | Existing app project URL. |
+| `SUPABASE_SERVICE_ROLE_KEY` | Existing server-only Supabase key (`SUPABASE_SERVICE_KEY` fallback remains supported). |
+
+Keep existing browser settings `VITE_SUPABASE_URL`, `VITE_SUPABASE_ANON_KEY`, and `VITE_API_BASE_URL`. The production browser API base should point at the deployed backend. A missing origin or unapplied rate-limit migration fails closed with a specific code.
+
+## Local steps (PowerShell, Node 24)
+
+1. In the app's Supabase project SQL editor, apply `supabase/migrations/20260908131521_morphly_session_rate_limit.sql`. This is additive; it does not change existing wallet/session data. Verify the function is executable by `service_role` only and run Supabase security advisors. The connected Supabase account did not expose this app's project, so this migration has **not** been applied or verified against the live database here.
+2. Create/update `app/.env.local` directly with the server/browser settings above. For local development, set `APP_ORIGIN=http://localhost:5173`. Keep this file untracked.
+3. Install from the existing lockfile on a fresh checkout, then run the API in one terminal:
+
+```powershell
+Set-Location D:\Format-Boy\app
+npm ci
+node --env-file=.env.local --import tsx scripts/local-api-server.mjs
+```
+
+4. In another terminal, point Vite at that API and open the app at **localhost**, not 127.0.0.1:
+
+```powershell
+Set-Location D:\Format-Boy\app
+$env:FORMAT_BOY_LOCAL_API_TARGET = 'http://127.0.0.1:3001'
+npm run dev -- --host localhost --port 5173 --strictPort
+```
+
+5. Free validation and repeatable checks:
+
+```powershell
+node --env-file=.env.local scripts/check-morphly.mjs
+npm run build
+npm run test:morphly
+npx eslint src/pages/Dashboard.tsx src/lib/morphly-session.ts tests/morphly.test.ts
+```
+
+Optional isolated browser fixture: `npm run dev -- --config tests/morphly-browser.config.ts`, then open `http://127.0.0.1:5174/tests/morphly-browser.html`. It cannot create a paid Morphly session. The first simulated Stop intentionally rejects; the second confirms. Set `window.morphlyTest.denyCamera = true` in this fixture's console to simulate permission denial. Production code does not expose this fixture object.
+
+## Deployment and desktop steps
+
+1. Apply the database migration and configure Vercel environment variables before deploying the proxy. The Vercel project is `format-boy-cam`, with root directory `app`. Set `APP_ORIGIN` to the exact deployed website origin, plus `APP_DESKTOP_ORIGIN` for desktop; allow both origins on the Morphly key. Preview deployments require their own explicitly configured/allowed origin.
+2. From the repository root, using the already linked Vercel project and authenticated CLI:
+
+```powershell
+Set-Location D:\Format-Boy
+npx vercel deploy --prod
+```
+
+3. Verify `/api/morphly-token` and its existing rewrite after deployment. A signed-out POST with an allowed Origin must return 401 and no-store; a foreign Origin must return 403. Do not request an authenticated session just to validate a key. Use the free validation script or Morphly's Test Morphly connection action.
+4. Rebuild the desktop package through the existing workflow. Stop any Vite development server on 5173 before running the packaged app:
+
+```powershell
+Set-Location D:\Format-Boy\app
+npm run electron:release
+```
+
+On this Windows machine the default legacy signing-tools archive could not extract two macOS symbolic links because the process lacks symlink privileges. The installed electron-builder supports the Windows-specific toolset below, without changing system privileges:
+
+```powershell
+npm run build
+npx electron-builder --win --publish never --config.toolsets.winCodeSign=1.1.0
+```
+
+The verification build was staged under `%TEMP%\format-boy-morphly-build-20260908\app` with the unchanged lockfile and `npm ci`. Its archive was inspected: final `dist/index.html` matched, the localhost server was included, all four native binaries were bundled, and no `.env` files were present. NSIS packaging completed successfully using `--prepackaged release/win-unpacked --config.toolsets.winCodeSign=1.1.0`. The completed installer and blockmap are in `app/release/morphly-sdk-verified/`; their copied SHA-256 hashes were verified. This is an uninstalled test build at the existing version. Windows Authenticode inspection confirms that it is unsigned. The initial partial output under `app/release/morphly-sdk-update` is not a completed installer; automated approval review blocked its deletion, so it remains in place.
+
+Installer: `CALL ME Setup 2.0.25.exe` (110,245,181 bytes). SHA-256: `93610E8018A20505504FB94A58E1F03C8A85A1D6A62113CD14F92FEBF252BDDB`.
+
+If native camera binaries are missing, first run the existing native build from the repository root:
+
+```powershell
+cmake -S native-camera -B native-camera/build -A x64
+cmake --build native-camera/build --config Release
+```
+
+5. Publish the installer through the existing release process only after the live checklist passes, using that process's release versioning. This update does not publish an installer, change the app version, or deploy production. Do not package a permanent Morphly key or server `.env` file with Electron.
+6. Reload/restart existing browser windows after deployment so the new hashed application bundle and revalidated hosted SDK load. Do not copy a single SDK file into the app or use a data/blob import that breaks relative modules. No app service worker was found to purge.
+
+## Actual verification
+
+- Production Vite build passed. It still reports the existing bundle-size and old Browserslist-data warnings.
+- All 15 focused tests passed: full response/status, both model names, authenticated canonical caller, denied login/account/origin, duration validation, insufficient app credits, per-user limit denial, stable idempotency, 409, setup-required error, pending-stop object retention, navigation during connection, app cleanup retry, post-stop balances, safe diagnostics, and localhost asset restrictions.
+- Targeted frontend lint passed. Repository-wide lint has existing failures, including the route's existing `@ts-nocheck` convention. The broader TypeScript check still has existing errors in AdminDashboard, Subscription, and VirtualCameraService; no errors were reported in the changed Morphly frontend files.
+- Browser fixture: black output reached live, double Start produced only one connection, Start disabled while live, authenticated headers used, prompt changed without reconnecting, four billing fields appeared, failed Stop retained session/disabled Start, Retry Stop confirmed on the same object, pending stop survived navigation, camera denial created no additional simulated SDK session, and simulated HTTP 402 showed credit feedback without an SDK connection. Layout inspected at desktop widths including 800 × 600.
+- Final built application served by the new localhost server loaded its normal sign-in screen and controls at `http://localhost:5173` with no reported page errors. No real sign-in or stream was attempted.
+- Current real hosted SDK and its relative dependency loaded in the browser without creating a session.
+- Existing server Morphly key: free validation returned HTTP 200 / `valid: true`. This does not prove live session availability or allowed-origin setup.
+- Actual local Express token route: signed-out allowed-origin POST returned 401 / `APP_LOGIN_REQUIRED`; foreign-origin POST returned 403 / `ORIGIN_NOT_ALLOWED`, both no-store.
+- Existing deployed token route GET returned 405 / `METHOD_NOT_ALLOWED`; the updated proxy has not been deployed.
+- Built browser assets scanned against the existing Morphly and Supabase server keys: no matches. No credentials were printed.
+- No paid stream, production database migration, live transformation, virtual-camera output, installer installation, or production deployment was performed.
+
+## Live manual checklist (requires your approval to spend streaming credits)
+
+1. Sign in to the app; for the first localhost desktop launch, sign in again. Confirm your existing app wallet appears and Google/email login still works.
+2. Validate the key without starting a stream. Expect HTTP 200 and `valid: true`. Check `realtime:create` scope and exact website/localhost origins in Morphly settings.
+3. Deny camera permission and press Start. Confirm useful permission feedback, Start becomes available again, and no token/session request is created. Then grant permission.
+4. Start one 30-second session. Double-click Start to confirm only one creation. In Network inspect token **status and code only**, never copy credentials into logs/chat. Confirm transformed output and the selected physical camera; check the native virtual camera/OBS preview separately.
+5. Change the prompt and confirm the transformation changes without another token request. Test an existing reference image too.
+6. Check Morphly available/reserved/charged/billable fields independently. Available may stay flat because credits were reserved; the app wallet is a separate existing balance/policy.
+7. Stop. Confirm local camera tracks release and Start stays blocked until stop confirmation. Confirm the last balance remains visible and the UI does not promise immediate settlement/refund.
+8. In a controlled test, block the Morphly stop request, press Stop, and confirm Retry Stop plus disabled Start. Restore the network and click Retry Stop; verify it targets the same session, not a new creation. Repeat by navigating away and returning while stop is pending. Avoid closing the entire app while a retry is pending: an in-memory SDK object cannot survive process termination; SDK pagehide cleanup is best effort and server reconciliation may be needed.
+9. Test insufficient credits (402), rate limiting (429), expired app login (401), disallowed origin/scope (403), and automatic session expiry. Confirm useful errors and cleanup; do not loop replacement sessions.
+10. If `REALTIME_SETUP_REQUIRED` is returned, contact Morphly support to finish its server update. Do not replace the integration to bypass that service setup error.
+
+References: [Morphly guide and examples](https://morphly.fun/docs), [hosted SDK](https://morphly.fun/sdk/morphly.js), [Supabase verified-user API](https://supabase.com/docs/reference/javascript/auth-getuser).

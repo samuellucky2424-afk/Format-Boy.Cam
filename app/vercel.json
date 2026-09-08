@@ -1,4 +1,8 @@
 {
+  "headers": [
+    { "source": "/api/morphly-token", "headers": [{ "key": "Cache-Control", "value": "no-store" }] },
+    { "source": "/index.html", "headers": [{ "key": "Cache-Control", "value": "no-cache, must-revalidate" }] }
+  ],
   "rewrites": [
     {
       "source": "/api/morphly-token",

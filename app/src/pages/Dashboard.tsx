@@ -1,4 +1,4 @@
-import { useState, useRef, useEffect, useCallback } from 'react';
+import { useState, useRef, useEffect, useCallback, useSyncExternalStore } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Upload, Play, Square, Clock, Zap, Monitor, Plus, Coins, Minus, X, Settings, Eye, EyeOff, Camera, MessageSquare } from 'lucide-react';
 import { toast } from 'sonner';
@@ -8,30 +8,20 @@ import { apiFetch, getApiUrl } from '@/lib/api-client';
 import { ROUTES } from '@/lib/routes';
 import { VirtualCameraService } from '@/services/VirtualCameraService';
 import { isFiniteNumber } from '@/lib/utils';
-
-interface RealtimeClient {
-  disconnect: () => void;
-  set: (config: { prompt?: string; enhance?: boolean; image?: string | Blob | File }) => Promise<void>;
-  setPrompt: (text: string, options?: { enhance?: boolean }) => Promise<void>;
-  on?: (event: string, listener: (data: unknown) => void) => void;
-  off?: (event: string, listener: (data: unknown) => void) => void;
-}
+import { supabase } from '@/lib/supabase';
+import { morphlySession, morphlyDiagnostic, morphlyErrorMessage } from '@/lib/morphly-session';
 
 const PREVIEW_WINDOW_NAME = 'format-boy-preview';
 const PREVIEW_WINDOW_FEATURES = 'popup=yes,width=1280,height=720,minWidth=640,minHeight=360,resizable=yes,scrollbars=no';
 const MORPHLY_SDK_URL = 'https://morphly.fun/sdk/morphly.js';
-const MORPHLY_REALTIME_MODEL = 'lucy-2.5';
-// Match Morphly's native lucy-2.5 capture profile. Sending at 20 fps made the
-// SDK resample every frame before it reached the model.
+const MORPHLY_REALTIME_MODEL = 'morphly-realtime';
+// Capture preferences; Morphly determines the actual output profile.
 const MORPHLY_REALTIME_WIDTH = 1280;
 const MORPHLY_REALTIME_HEIGHT = 720;
 const MORPHLY_REALTIME_FPS = 30;
 const MORPHLY_OUTPUT_RESOLUTION = '1080p';
-const MORPHLY_MAX_SESSION_SECONDS = 300;
-const REMOTE_VIDEO_READY_TIMEOUT_MS = 12_000;
-const REMOTE_VIDEO_VISIBLE_TIMEOUT_MS = 20_000;
-const MORPHLY_FIRST_FRAME_TIMEOUT_MS =
-  REMOTE_VIDEO_READY_TIMEOUT_MS + REMOTE_VIDEO_VISIBLE_TIMEOUT_MS + 5_000;
+const MORPHLY_MAX_SESSION_SECONDS = 30;
+const MORPHLY_FIRST_FRAME_TIMEOUT_MS = 20_000;
 
 function isVirtualCameraSource(device: MediaDeviceInfo) {
   const label = device.label.toLowerCase();
@@ -52,6 +42,7 @@ function getPreferredCameraId(devices: MediaDeviceInfo[]) {
 
 async function apiRequest<T>(endpoint: string, options?: RequestInit): Promise<T> {
   const response = await apiFetch(endpoint, {
+    retries: options?.method === 'POST' ? 0 : undefined,
     ...options,
     headers: {
       'Content-Type': 'application/json',
@@ -60,7 +51,9 @@ async function apiRequest<T>(endpoint: string, options?: RequestInit): Promise<T
   });
   if (!response.ok) {
     const errorData = await response.json().catch(() => ({}));
-    throw new Error(errorData.error || errorData.message || `API Error: ${response.statusText}`);
+    throw Object.assign(new Error(errorData.error || errorData.message || `API Error: ${response.statusText}`), {
+      code: errorData.code, status: response.status,
+    });
   }
   return response.json();
 }
@@ -76,19 +69,22 @@ function emitElectronLog(level: 'log' | 'info' | 'warn' | 'error', message: stri
   }
 }
 
-function getErrorMessage(error: unknown, fallback: string) {
-  return error instanceof Error ? error.message : String(error || fallback);
-}
 
 function Dashboard() {
   const { user } = useAuth();
   const { credits, setCredits, setSessionStatus } = useApp();
   const navigate = useNavigate();
-  const [isStreaming, setIsStreaming] = useState(false);
+  const phase = useSyncExternalStore(morphlySession.subscribe, morphlySession.getSnapshot);
+  const isStreaming = phase === 'live';
+  const isLoading = phase === 'starting';
+  const isStopping = phase === 'stopping';
+  const stopPending = phase === 'stop-pending';
+  const morphlyBalance = useSyncExternalStore(morphlySession.subscribe, morphlySession.getBalance);
+  const [morphlyStatus, setMorphlyStatus] = useState('Ready');
+  const mountedRef = useRef(true);
   const [isObsMode, setIsObsMode] = useState(false);
   const [isGhostMode, setIsGhostMode] = useState(false);
   const [uploadedImage, setUploadedImage] = useState<string | null>(null);
-  const [isLoading, setIsLoading] = useState(false);
   const [cameraDevices, setCameraDevices] = useState<MediaDeviceInfo[]>([]);
   const [selectedCameraId, setSelectedCameraId] = useState<string>('');
   const [cameraDiscoveryMessage, setCameraDiscoveryMessage] = useState('Finding cameras...');
@@ -101,11 +97,9 @@ function Dashboard() {
   const outputVideoRef = useRef<HTMLVideoElement>(null);
   const webcamStreamRef = useRef<MediaStream | null>(null);
   const virtualCameraRef = useRef<VirtualCameraService | null>(null);
-  const realtimeClientRef = useRef<RealtimeClient | null>(null);
   const pollIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const previewWindowRef = useRef<Window | null>(null);
 
-  const CREDITS_PER_SECOND = 2;
   const POLLING_INTERVAL = 1000;
 
   const getPreviewUrl = useCallback(() => {
@@ -167,8 +161,8 @@ function Dashboard() {
     const newValue = !isGhostMode;
     setIsGhostMode(newValue);
     
-    if (typeof (window as any).require !== 'undefined') {
-      const { ipcRenderer } = (window as any).require('electron');
+    if (typeof window.require !== 'undefined') {
+      const { ipcRenderer } = window.require('electron');
       ipcRenderer.send('toggle-capture-protection', { isProtected: newValue });
       
       if (newValue) {
@@ -180,8 +174,8 @@ function Dashboard() {
   }, [isGhostMode]);
 
   const handleWindowControl = (action: 'minimize' | 'maximize' | 'close') => {
-    if (typeof (window as any).require !== 'undefined') {
-      const { ipcRenderer } = (window as any).require('electron');
+    if (typeof window.require !== 'undefined') {
+      const { ipcRenderer } = window.require('electron');
       ipcRenderer.send(`window-${action}`);
     }
   };
@@ -206,26 +200,26 @@ function Dashboard() {
   }, []);
 
   useEffect(() => {
+    mountedRef.current = true;
     return () => {
-      if (user?.id) {
-        void apiRequest('/end-session', {
-          method: 'POST',
-          body: JSON.stringify({ userId: user.id })
-        }).catch(() => {});
-      }
-      if (pollIntervalRef.current) {
-        clearInterval(pollIntervalRef.current);
-      }
-      if (webcamStreamRef.current) {
-        webcamStreamRef.current.getTracks().forEach(track => track.stop());
-      }
-      if (realtimeClientRef.current) {
-        realtimeClientRef.current.disconnect();
-      }
+      mountedRef.current = false;
+      if (pollIntervalRef.current) clearInterval(pollIntervalRef.current);
+      void morphlySession.stop().catch(() => {
+        toast.error('Morphly stop is pending. Return to the camera to Retry Stop.', {
+          id: 'morphly-stop-pending',
+          duration: Infinity,
+          action: { label: 'Retry Stop', onClick: () => { void morphlySession.stop().catch(() => {}); } },
+        });
+      });
+      webcamStreamRef.current?.getTracks().forEach((track) => track.stop());
       stopVirtualCamera();
       closeObsPreviewWindow(false);
     };
   }, [closeObsPreviewWindow, stopVirtualCamera, user?.id]);
+
+  useEffect(() => {
+    setSessionStatus(isStreaming ? 'LIVE' : 'IDLE');
+  }, [isStreaming, setSessionStatus]);
 
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
@@ -308,30 +302,11 @@ function Dashboard() {
           return;
         }
 
-        // Chromium hides non-default cameras and their labels before camera
-        // permission is granted. Open and immediately close a temporary stream
-        // so the following enumeration includes USB and built-in cameras.
-        let permissionStream: MediaStream | null = null;
-        try {
-          permissionStream = await mediaDevices.getUserMedia({
-            video: true,
-            audio: false
-          });
-        } catch (error) {
-          console.warn('Camera permission was not granted during discovery:', error);
-          if (!isCancelled) {
-            setCameraDiscoveryMessage(
-              initialResult.selectableCameras.length > 0
-                ? 'Allow camera access to show every camera'
-                : 'Camera permission is required'
-            );
-          }
-          return;
-        } finally {
-          permissionStream?.getTracks().forEach((track) => track.stop());
+        // Request camera access only from Start. Labels are refreshed after
+        // permission is granted; opening the dashboard does not start capture.
+        if (!isCancelled) {
+          setCameraDiscoveryMessage('Press Start to allow camera access');
         }
-
-        await enumerateCameras();
       } catch (error) {
         console.error('Failed to initialize cameras:', error);
         if (!isCancelled) {
@@ -371,111 +346,6 @@ function Dashboard() {
       }
     }, []);
 
-    const waitForRenderableStream = useCallback(async (stream: MediaStream) => {
-      const probeVideo = document.createElement('video');
-      const probeCanvas = document.createElement('canvas');
-      const probeContext = probeCanvas.getContext('2d', { willReadFrequently: true });
-
-      if (!probeContext) {
-        throw new Error('Could not create Morphly probe context');
-      }
-
-      probeCanvas.width = 32;
-      probeCanvas.height = 18;
-      probeVideo.muted = true;
-      probeVideo.autoplay = true;
-      probeVideo.playsInline = true;
-      probeVideo.srcObject = stream;
-
-      await probeVideo.play().catch(() => {});
-
-      const hasVisiblePixels = () => {
-        if (
-          probeVideo.readyState < HTMLMediaElement.HAVE_CURRENT_DATA ||
-          probeVideo.videoWidth <= 0 ||
-          probeVideo.videoHeight <= 0
-        ) {
-          return false;
-        }
-
-        probeContext.drawImage(probeVideo, 0, 0, probeCanvas.width, probeCanvas.height);
-        const { data } = probeContext.getImageData(0, 0, probeCanvas.width, probeCanvas.height);
-
-        let brightPixelCount = 0;
-        for (let index = 0; index < data.length; index += 4) {
-          const red = data[index];
-          const green = data[index + 1];
-          const blue = data[index + 2];
-
-          if (red > 16 || green > 16 || blue > 16) {
-            brightPixelCount++;
-            if (brightPixelCount >= 8) {
-              return true;
-            }
-          }
-        }
-
-        return false;
-      };
-
-      await new Promise<void>((resolve, reject) => {
-        const cleanup = () => {
-          window.clearTimeout(timeoutId);
-          if (visibilityCheckId !== null) {
-            window.clearInterval(visibilityCheckId);
-          }
-          probeVideo.removeEventListener('loadeddata', maybeReady);
-          probeVideo.removeEventListener('playing', maybeReady);
-          probeVideo.removeEventListener('resize', maybeReady);
-        };
-
-        const maybeReady = () => {
-          if (
-            probeVideo.readyState >= HTMLMediaElement.HAVE_CURRENT_DATA &&
-            probeVideo.videoWidth > 0 &&
-            probeVideo.videoHeight > 0
-          ) {
-            const visibleDeadline = window.setTimeout(() => {
-              cleanup();
-              reject(new Error('Timed out waiting for non-black Morphly video frames'));
-            }, REMOTE_VIDEO_VISIBLE_TIMEOUT_MS);
-
-            const finishVisibleCheck = () => {
-              window.clearTimeout(visibleDeadline);
-              cleanup();
-              resolve();
-            };
-
-            const visibilityCheck = () => {
-              if (hasVisiblePixels()) {
-                finishVisibleCheck();
-              }
-            };
-
-            visibilityCheck();
-            visibilityCheckId = window.setInterval(visibilityCheck, 100);
-
-            probeVideo.removeEventListener('loadeddata', maybeReady);
-            probeVideo.removeEventListener('playing', maybeReady);
-            probeVideo.removeEventListener('resize', maybeReady);
-          }
-        };
-
-        let visibilityCheckId: number | null = null;
-        const timeoutId = window.setTimeout(() => {
-          cleanup();
-          reject(new Error('Timed out waiting for Morphly video frames'));
-        }, REMOTE_VIDEO_READY_TIMEOUT_MS);
-
-        probeVideo.addEventListener('loadeddata', maybeReady);
-        probeVideo.addEventListener('playing', maybeReady);
-        probeVideo.addEventListener('resize', maybeReady);
-        maybeReady();
-      });
-
-      probeVideo.srcObject = null;
-    }, []);
-
   const startWebcam = async () => {
     try {
         const buildVideoConstraints = (): MediaTrackConstraints => {
@@ -506,6 +376,14 @@ function Dashboard() {
       }
 
       webcamStreamRef.current = stream;
+      morphlySession.own(stream);
+      // Camera labels may have been hidden before this user-granted capture.
+      void navigator.mediaDevices.enumerateDevices().then((devices) => {
+        if (mountedRef.current) {
+          setCameraDevices(devices.filter((device) => device.kind === 'videoinput' && !isVirtualCameraSource(device)));
+          setCameraDiscoveryMessage('');
+        }
+      }).catch(() => {});
       if (webcamVideoRef.current) {
         webcamVideoRef.current.srcObject = stream;
           void playPreviewVideo(webcamVideoRef.current, 'Hidden webcam preview');
@@ -519,6 +397,7 @@ function Dashboard() {
       return stream;
     } catch (error) {
       console.error('Webcam error:', error);
+      if (mountedRef.current) setMorphlyStatus('Morphly needs camera permission. Allow camera access, then press Start.');
       toast.error('Failed to access webcam. Please allow camera permissions.');
       return null;
     }
@@ -534,216 +413,89 @@ function Dashboard() {
     }
   };
 
-  const connectToMorphly = async (stream: MediaStream, userId: string): Promise<RealtimeClient> => {
-    let firstFrameTimeoutId: number | null = null;
-    let settleRemoteReady: (() => void) | null = null;
-    let settleRemoteError: ((error: Error) => void) | null = null;
-    let remoteReadySettled = false;
-
-    const remoteReadyPromise = new Promise<void>((resolve, reject) => {
-      const resolveOnce = () => {
-        if (remoteReadySettled) return;
-        remoteReadySettled = true;
-        if (firstFrameTimeoutId !== null) {
-          window.clearTimeout(firstFrameTimeoutId);
-        }
-        resolve();
-      };
-      const rejectOnce = (error: Error) => {
-        if (remoteReadySettled) return;
-        remoteReadySettled = true;
-        if (firstFrameTimeoutId !== null) {
-          window.clearTimeout(firstFrameTimeoutId);
-        }
-        reject(error);
-      };
-
-      settleRemoteReady = resolveOnce;
-      settleRemoteError = rejectOnce;
-      firstFrameTimeoutId = window.setTimeout(() => {
-        rejectOnce(new Error('Morphly connected but did not return a usable video frame.'));
-      }, MORPHLY_FIRST_FRAME_TIMEOUT_MS);
+  const connectToMorphly = async (stream: MediaStream, userId: string) => {
+    const attempt = morphlySession.attempt;
+    const video = outputVideoRef.current;
+    if (!video) throw Object.assign(new Error(), { code: 'VIDEO_PLAYBACK_FAILED' });
+    setMorphlyStatus('Loading Morphly');
+    const { createMorphlyClient } = await import(/* @vite-ignore */ MORPHLY_SDK_URL)
+      .catch(() => { throw Object.assign(new Error(), { code: 'SDK_LOAD_FAILED' }); });
+    if (morphlySession.cancelled) return;
+    const client = createMorphlyClient({
+      tokenEndpoint: `${getApiUrl('/morphly-token')}?userId=${encodeURIComponent(userId)}`,
+      tokenEndpointHeaders: async () => {
+        const { data: { session } } = await supabase.auth.getSession();
+        if (!session) throw Object.assign(new Error(), { code: 'APP_LOGIN_REQUIRED', status: 401 });
+        return { Authorization: `Bearer ${session.access_token}` };
+      },
     });
-    // The remote stream can fail before the SDK's connect promise settles.
-    // Attach a handler immediately while still allowing the later await to throw.
-    void remoteReadyPromise.catch(() => {});
-
-    try {
-      const { createMorphlyClient } = await import(/* @vite-ignore */ MORPHLY_SDK_URL);
-
-      const tokenEndpoint = `${getApiUrl('/morphly-token')}?userId=${encodeURIComponent(userId)}`;
-      const client = createMorphlyClient({
-        tokenEndpoint
-      });
-
-      let initialImage: Blob | undefined;
-      if (uploadedImage) {
-        const imageResponse = await fetch(uploadedImage);
-        if (!imageResponse.ok) {
-          throw new Error('Could not prepare the selected reference image.');
-        }
-        initialImage = await imageResponse.blob();
-      }
-
-      const session = await client.realtime.connect(stream, {
-        model: MORPHLY_REALTIME_MODEL,
-        prompt,
-        image: initialImage,
-        enhancePrompt: true,
-        resolution: MORPHLY_OUTPUT_RESOLUTION,
-        maxSessionSeconds: MORPHLY_MAX_SESSION_SECONDS,
-        onRemoteStream: (editedStream: MediaStream) => {
-          void (async () => {
-            const video = outputVideoRef.current;
-            if (!video) {
-              settleRemoteError?.(new Error('Morphly output video is unavailable.'));
-              return;
-            }
-
-            const initialVideoTracks = editedStream?.getVideoTracks?.() ?? [];
-            emitElectronLog(
-              'info',
-              '[Morphly] Remote stream received',
-              initialVideoTracks.map((track) => ({
-                readyState: track.readyState,
-                muted: track.muted,
-                settings: track.getSettings()
-              }))
-            );
-
-            try {
-              // Morphly may emit the MediaStream before WebRTC attaches its
-              // video track. The render probe waits for that track and the
-              // first non-black processed frame instead of rejecting early.
-              await waitForRenderableStream(editedStream);
-            } catch (renderError) {
-              console.warn(
-                '[Morphly] Remote stream did not produce visible frames',
-                renderError
-              );
-              emitElectronLog(
-                'warn',
-                '[Morphly] Remote stream did not produce visible frames',
-                String(renderError)
-              );
-              settleRemoteError?.(
-                renderError instanceof Error
-                  ? renderError
-                  : new Error('Morphly did not return visible video frames.')
-              );
-              return;
-            }
-
-            const liveTracks = editedStream
-              .getVideoTracks()
-              .filter((track) => track.readyState === 'live');
-            if (liveTracks.length === 0) {
-              settleRemoteError?.(
-                new Error('Morphly connected but its video track ended before the first frame.')
-              );
-              return;
-            }
-
-            video.srcObject = editedStream;
-            video.playbackRate = 1;
-            (video as HTMLVideoElement & { latencyHint?: string }).latencyHint = 'interactive';
-            try {
-              await video.play();
-            } catch (playError) {
-              settleRemoteError?.(
-                playError instanceof Error
-                  ? playError
-                  : new Error('Could not play the Morphly output.')
-              );
-              return;
-            }
-
-            for (const track of liveTracks) {
-              track.addEventListener('unmute', () => {
-                void playPreviewVideo(video, 'Recovered Morphly remote preview');
-              });
-              track.addEventListener('ended', () => {
-                emitElectronLog('warn', '[Morphly] Remote video track ended');
-              });
-            }
-
-            emitElectronLog(
-              'info',
-              '[Morphly] Processed output ready',
-              {
-                width: video.videoWidth,
-                height: video.videoHeight,
-                requestedResolution: MORPHLY_OUTPUT_RESOLUTION
-              }
-            );
-            startVirtualCamera(video);
-            settleRemoteReady?.();
-          })();
-        },
-        onConnectionQuality: (quality: unknown) => {
-          emitElectronLog('info', '[Morphly] Connection quality', quality);
-        },
-        onStateChange: (state: unknown) => {
-          emitElectronLog('info', '[Morphly] Connection state', state);
-          if (state === 'connected' && outputVideoRef.current) {
-            void playPreviewVideo(outputVideoRef.current, 'Reconnected Morphly preview');
-          }
-        },
-        onError: (sdkError: unknown) => {
-          emitElectronLog(
-            'error',
-            '[Morphly] Client error event',
-            getErrorMessage(sdkError, 'Unknown Morphly client error')
-          );
-        }
-      });
-
-      realtimeClientRef.current = session;
-      await remoteReadyPromise;
-      toast.success('Connected to AI!');
-
-      return session;
-    } catch (error: unknown) {
-      if (firstFrameTimeoutId !== null) {
-        window.clearTimeout(firstFrameTimeoutId);
-      }
-      console.error('[Morphly] SDK error:', error);
-      emitElectronLog(
-        'error',
-        '[Morphly] SDK error',
-        getErrorMessage(error, 'Unknown Morphly SDK error')
-      );
-
-      const morphlyError = error as {
-        code?: string;
-        status?: number;
-        cause?: { code?: string };
-      };
-      const errorCode = morphlyError?.code || morphlyError?.cause?.code;
-      if (errorCode === 'REALTIME_TEMPORARILY_DISABLED' || morphlyError?.status === 503) {
-        throw new Error(
-          'Morphly realtime sessions are temporarily paused for maintenance. Please try again later.'
-        );
-      }
-
-      throw error instanceof Error
-        ? error
-        : new Error('Failed to connect to Morphly.');
+    let initialImage: Blob | undefined;
+    if (uploadedImage) {
+      const response = await fetch(uploadedImage);
+      if (!response.ok) throw Object.assign(new Error(), { code: 'IMAGE_UNAVAILABLE' });
+      initialImage = await response.blob();
     }
+    if (morphlySession.cancelled) return;
+    setMorphlyStatus('Connecting to Morphly');
+    const session = await client.realtime.connect(stream, {
+      output: video,
+      model: MORPHLY_REALTIME_MODEL,
+      prompt,
+      image: initialImage,
+      audio: false,
+      enhancePrompt: true,
+      resolution: MORPHLY_OUTPUT_RESOLUTION,
+      maxSessionSeconds: MORPHLY_MAX_SESSION_SECONDS,
+      onStateChange: (state: string) => {
+        if (attempt !== morphlySession.attempt) return;
+        if (mountedRef.current) setMorphlyStatus(`Morphly: ${state}`);
+        if (state === 'disconnected' || state === 'failed') {
+          // SDK also stops on expiry/disconnection. Await that same stop object.
+          void handleStop(false);
+        }
+      },
+      onError: (error: unknown) => {
+        if (attempt !== morphlySession.attempt) return;
+        emitElectronLog('error', '[Morphly]', morphlyDiagnostic(error));
+        if (mountedRef.current) setMorphlyStatus(morphlyErrorMessage(error));
+      },
+    });
+    morphlySession.attach(session);
+    session.on('balance', (value: unknown) => {
+      if (attempt !== morphlySession.attempt) return;
+      morphlySession.updateBalance(value);
+    });
+    session.on('lowCredit', () => {
+      if (attempt !== morphlySession.attempt) return;
+      if (mountedRef.current) toast.warning('Morphly credits are running low.');
+    });
+    session.on('creditsExhausted', () => {
+      if (attempt !== morphlySession.attempt) return;
+      if (mountedRef.current) toast.error('Morphly credits exhausted. Stopping the session.');
+      void handleStop(false);
+    });
+    if (morphlySession.cancelled) return;
+    // The SDK attaches and plays the actual output. Dark video is valid video.
+    // Start the frame deadline only AFTER SDK connection/session creation.
+    await new Promise<void>((resolve, reject) => {
+      const startedAt = Date.now();
+      const timer = window.setInterval(() => {
+        if (morphlySession.cancelled) {
+          window.clearInterval(timer);
+          resolve();
+        } else if (video.readyState >= HTMLMediaElement.HAVE_CURRENT_DATA && video.videoWidth > 0 && video.videoHeight > 0) {
+          window.clearInterval(timer);
+          resolve();
+        } else if (Date.now() - startedAt >= MORPHLY_FIRST_FRAME_TIMEOUT_MS) {
+          window.clearInterval(timer);
+          reject(Object.assign(new Error(), { code: 'OUTPUT_TIMEOUT' }));
+        }
+      }, 100);
+    });
+    if (!morphlySession.cancelled) startVirtualCamera(video);
   };
 
-  const disconnectFromMorphly = () => {
-    stopVirtualCamera();
-    if (realtimeClientRef.current) {
-      realtimeClientRef.current.disconnect();
-      realtimeClientRef.current = null;
-    }
-    if (outputVideoRef.current) {
-      outputVideoRef.current.srcObject = null;
-    }
-  };
-
-  const pollSessionStatus = useCallback(async () => {
+  const pollSessionStatus = async () => {
     try {
       const response = await apiRequest<{ credits?: number; secondsUsed: number; creditsUsed?: number; remainingCredits?: number; shouldStop: boolean; forceEnd?: boolean }>(`/session-status?userId=${user?.id}`);
       const latestCredits = isFiniteNumber(response.remainingCredits)
@@ -767,136 +519,95 @@ function Dashboard() {
       console.error('Poll error:', error);
       emitElectronLog('error', '[Session] Poll error', String(error));
     }
-  }, [setCredits, user?.id]);
+  };
 
   const handleStart = async () => {
     if (!user?.id) {
-      toast.error('Please sign in before starting a session.');
+      toast.error('Please sign in before starting a Morphly session.');
       return;
     }
-
-    setIsLoading(true);
-    let sessionOpened = false;
-
+    if (!morphlySession.begin()) return; // Synchronous guard against double clicks.
+    let live = false;
+    setMorphlyStatus('Allow camera access to start Morphly');
     try {
       const stream = await startWebcam();
-      if (!stream) {
-        return;
-      }
-
-      const sessionResponse = await apiRequest<{
-        allowed: boolean;
-        error?: string;
-        credits?: number;
-      }>('/start-session', {
+      if (!stream || morphlySession.cancelled) return;
+      const sessionResponse = await apiRequest<{ allowed: boolean; error?: string; credits?: number }>('/start-session', {
         method: 'POST',
-        body: JSON.stringify({ userId: user.id })
+        body: JSON.stringify({ userId: user.id }),
       });
-
-      if (!sessionResponse.allowed) {
-        throw new Error(sessionResponse.error || 'Unable to start session.');
-      }
-
-      sessionOpened = true;
-
-      if (isFiniteNumber(sessionResponse.credits)) {
-        setCredits(sessionResponse.credits);
-      }
-
+      if (!sessionResponse.allowed) throw new Error(sessionResponse.error || 'Unable to start app session.');
+      morphlySession.onCleanup(async () => {
+        const response = await apiRequest<{ remainingCredits?: number }>('/end-session', {
+          method: 'POST', body: JSON.stringify({ userId: user.id }),
+        });
+        if (isFiniteNumber(response.remainingCredits)) setCredits(response.remainingCredits);
+      });
+      if (isFiniteNumber(sessionResponse.credits)) setCredits(sessionResponse.credits);
+      if (morphlySession.cancelled) return;
       await connectToMorphly(stream, user.id);
-
-      if (pollIntervalRef.current) {
-        clearInterval(pollIntervalRef.current);
-      }
-      pollIntervalRef.current = setInterval(() => {
-        void pollSessionStatus();
-      }, POLLING_INTERVAL);
-      void pollSessionStatus();
-
-      setIsStreaming(true);
-      setSessionStatus('LIVE');
+      if (morphlySession.cancelled) return;
+      live = true;
+      if (pollIntervalRef.current) clearInterval(pollIntervalRef.current);
+      // This is the existing app wallet policy, separate from SDK-owned Morphly billing.
+      pollIntervalRef.current = setInterval(() => { void pollSessionStatus(); }, POLLING_INTERVAL);
+      setMorphlyStatus('Morphly live');
+      toast.success('Connected to Morphly');
     } catch (error) {
-      console.error('Start session error:', error);
-
-      if (sessionOpened) {
-        try {
-          await apiRequest('/end-session', {
-            method: 'POST',
-            body: JSON.stringify({ userId: user.id })
-          });
-        } catch (cleanupError) {
-          console.error('Session cleanup error:', cleanupError);
-        }
+      const message = morphlyErrorMessage(error);
+      emitElectronLog('error', '[Morphly] Start failed', morphlyDiagnostic(error));
+      if (mountedRef.current) {
+        setMorphlyStatus(message);
+        toast.error(message);
       }
-
-      if (pollIntervalRef.current) {
-        clearInterval(pollIntervalRef.current);
-        pollIntervalRef.current = null;
-      }
-
-      toast.error(error instanceof Error ? error.message : 'Failed to start session');
-      stopWebcam();
-      disconnectFromMorphly();
-      setIsStreaming(false);
-      setSessionStatus('IDLE');
     } finally {
-      setIsLoading(false);
+      morphlySession.finishStart(live);
+      if (!live || morphlySession.cancelled) await handleStop(false);
     }
   };
 
   async function handleStop(showToast = true) {
-    emitElectronLog('info', '[Session] handleStop called', { showToast });
-
-    try {
-      const response = await apiRequest<{ remainingCredits?: number }>('/end-session', {
-        method: 'POST',
-        body: JSON.stringify({ userId: user?.id })
-      });
-      
-      if (response && isFiniteNumber(response.remainingCredits)) {
-        setCredits(response.remainingCredits);
-      } else if (response && response.remainingCredits !== undefined) {
-        console.error('Invalid credit response', response);
-      }
-    } catch (error) {
-      console.error('Stop session error:', error);
-    }
-
     if (pollIntervalRef.current) {
       clearInterval(pollIntervalRef.current);
       pollIntervalRef.current = null;
     }
-
-    disconnectFromMorphly();
+    stopVirtualCamera();
     stopWebcam();
-    
-    setIsStreaming(false);
-    setSessionStatus('IDLE');
-    
-    if (showToast) {
-      toast.info('Session stopped');
+    try {
+      await morphlySession.stop();
+      toast.dismiss('morphly-stop-pending');
+      if (outputVideoRef.current) outputVideoRef.current.srcObject = null;
+      if (mountedRef.current && showToast) {
+        setMorphlyStatus('Morphly stopped. Final usage and refunds may remain pending.');
+        toast.info('Morphly stopped; settlement may still be pending.');
+      }
+    } catch (error) {
+      if (mountedRef.current) {
+        setMorphlyStatus(morphlyErrorMessage(error));
+        toast.error(morphlyErrorMessage(error));
+      }
     }
   }
 
   const applyTransformation = async (imageUrl: string | null) => {
-    if (!realtimeClientRef.current) return;
+    if (!morphlySession.session) return;
     
     try {
       if (imageUrl) {
         toast.info('Applying image transformation...');
         const response = await fetch(imageUrl);
         const blob = await response.blob();
-        await realtimeClientRef.current.set({
+        await morphlySession.session.set({
           prompt: prompt,
           enhance: true,
           image: blob
         });
         toast.success('Image applied to stream!');
       } else {
-        await realtimeClientRef.current.setPrompt(prompt, { enhance: true });
+        await morphlySession.session.setPrompt(prompt, { enhance: true });
       }
     } catch (err) {
-      console.error('Failed to apply transformation:', err);
+      emitElectronLog('error', '[Morphly] Image update failed', morphlyDiagnostic(err));
       toast.error('Failed to update stream with image');
     }
   };
@@ -931,55 +642,24 @@ function Dashboard() {
       toast.error('Enter a prompt before sending.');
       return;
     }
-    if (!isStreaming || !realtimeClientRef.current) {
+    if (!isStreaming || !morphlySession.session) {
       toast.error('Start a camera session before sending a prompt.');
       return;
     }
 
     setIsSendingPrompt(true);
     try {
-      if (uploadedImage) {
-        const imageResponse = await fetch(uploadedImage);
-        if (!imageResponse.ok) {
-          throw new Error('Could not prepare the uploaded reference image.');
-        }
-
-        const imageBlob = await imageResponse.blob();
-        await realtimeClientRef.current.set({
-          prompt: nextPrompt,
-          enhance: true,
-          image: imageBlob,
-        });
-      } else {
-        await realtimeClientRef.current.setPrompt(nextPrompt, { enhance: true });
-      }
+      await morphlySession.session.setPrompt(nextPrompt, { enhance: true });
 
       setPrompt(nextPrompt);
       setIsPromptModalOpen(false);
-      toast.success(
-        uploadedImage
-          ? 'Prompt and reference image sent to Lucy 2.5.'
-          : 'Prompt sent to Lucy 2.5.'
-      );
+      toast.success('Prompt sent to Morphly.');
     } catch (error) {
-      console.error('Failed to send Morphly prompt:', error);
+      emitElectronLog('error', '[Morphly] Prompt update failed', morphlyDiagnostic(error));
       toast.error('Could not send the prompt to Morphly.');
     } finally {
       setIsSendingPrompt(false);
     }
-  };
-
-  const getRemainingSeconds = () => {
-    return Math.floor(credits / CREDITS_PER_SECOND);
-  };
-
-  const formatTime = (seconds: number) => {
-    const mins = Math.floor(seconds / 60);
-    const secs = seconds % 60;
-    if (mins > 0) {
-      return `~${mins}m ${secs}s`;
-    }
-    return `~${secs}s`;
   };
 
   return (
@@ -1019,10 +699,10 @@ function Dashboard() {
             autoPlay 
             playsInline
             muted
-            className={`w-full h-full object-contain ${isStreaming ? 'block' : 'hidden'} will-change-transform [transform:translateZ(0)] [backface-visibility:hidden] [image-rendering:auto]`}
+            className={`w-full h-full object-contain ${isStreaming || isLoading ? 'block' : 'hidden'} will-change-transform [transform:translateZ(0)] [backface-visibility:hidden] [image-rendering:auto]`}
           />
 
-         {!isStreaming && (
+         {!isStreaming && !isLoading && (
             <div className="flex flex-col items-center justify-center gap-6 p-8">
                <div className="w-16 h-16 rounded-2xl bg-[#1a1a1a] border border-[#2a2a2a] flex items-center justify-center overflow-hidden shadow-lg">
                  <img src="./logo.png" alt="Logo" className="w-full h-full object-cover" />
@@ -1053,12 +733,24 @@ function Dashboard() {
           />
       </main>
 
+      <section aria-label="Morphly session status" className="border-t border-[#333] bg-[#111] px-4 py-2 text-xs">
+        <p role="status" className="text-gray-200">{stopPending
+          ? morphlySession.session ? 'Morphly stop pending. Use Retry Stop before starting again.' : 'App session close is pending. Use Retry Stop to finish.'
+          : morphlyStatus}</p>
+        <dl className="mt-2 flex flex-wrap gap-x-5 gap-y-1 text-gray-300">
+          {([['available_credits', 'Morphly available'], ['reserved_credits', 'Reserved'], ['charged_credits', 'Charged'], ['billable_seconds', 'Billable seconds']] as const).map(([key, label]) => (
+            <div key={key} className="flex gap-2"><dt>{label}</dt><dd>{morphlyBalance[key]?.toLocaleString() ?? 'Not reported'}</dd></div>
+          ))}
+        </dl>
+        <p className="mt-1 text-gray-400">Morphly reserves credits upfront. Available credits may stay unchanged while streaming; final usage and refunds may remain pending after Stop.</p>
+      </section>
+
       {/* Bottom Bar */}
-      <footer className="h-[52px] bg-[#0A0A0A] flex items-stretch justify-between px-0 flex-shrink-0 relative z-10">
-         <div className="flex min-w-0 flex-1 items-center gap-1.5 px-3">
+      <footer className="min-h-[52px] bg-[#0A0A0A] flex flex-wrap items-stretch justify-between px-0 flex-shrink-0 relative z-10">
+         <div className="flex min-w-0 flex-1 flex-wrap items-center gap-1.5 px-3 py-2">
             <button 
               onClick={handleStart}
-              disabled={isStreaming || isLoading}
+              disabled={phase !== 'idle'}
               className={`h-[34px] shrink-0 px-3.5 rounded-sm flex items-center gap-2 border transition-all ${
                 isStreaming 
                   ? 'bg-[#122A1F] border-[#133C29] text-[#22C55E] opacity-50' 
@@ -1071,11 +763,11 @@ function Dashboard() {
 
             <button 
               onClick={() => { void handleStop(); }}
-              disabled={!isStreaming}
+              disabled={phase === 'idle' || isStopping}
               className="h-[34px] shrink-0 px-3.5 flex items-center gap-2 rounded-sm border bg-[#1E1E1E] border-[#2A2A2A] text-[#737373] hover:text-[#A3A3A3] transition-all"
             >
               <Square className="w-3.5 h-3.5 fill-current opacity-70" />
-              <span className="font-medium text-[13px]">Stop</span>
+              <span className="font-medium text-[13px]">{stopPending ? 'Retry Stop' : isStopping ? 'Stopping...' : 'Stop'}</span>
             </button>
 
             <div className="ml-1 flex h-[34px] min-w-[140px] max-w-[220px] flex-1 items-center rounded-sm border border-[#2A2A2A] bg-[#1E1E1E] text-[#A3A3A3] focus-within:border-[#3A3A3A]">
@@ -1083,7 +775,7 @@ function Dashboard() {
               <select
                 value={selectedCameraId}
                 onChange={(event) => setSelectedCameraId(event.target.value)}
-                disabled={cameraDevices.length === 0 || isStreaming || isLoading}
+                disabled={cameraDevices.length === 0 || phase !== 'idle'}
                 title={isStreaming ? 'Stop the session to change camera' : cameraDiscoveryMessage || 'Select camera'}
                 aria-label="Camera input"
                 className="h-full min-w-0 flex-1 cursor-pointer bg-transparent px-2 text-[12px] text-[#A3A3A3] focus:outline-none disabled:cursor-not-allowed disabled:text-[#666666]"
@@ -1154,7 +846,7 @@ function Dashboard() {
                 <div className="hidden items-center gap-2 min-[1360px]:flex">
                   <Zap className="w-3.5 h-3.5 text-[#F59E0B] fill-[#F59E0B]" />
                   <div className="flex flex-col justify-center gap-[2px]">
-                   <span className="text-[8px] text-[#A1A1AA] font-bold tracking-widest uppercase">Usage Rate</span>
+                   <span className="text-[8px] text-[#A1A1AA] font-bold tracking-widest uppercase">App usage rate</span>
                    <div className="flex items-baseline gap-1">
                       <span className="text-xs font-bold text-[#E5E5E5] uppercase">2 credits</span>
                       <span className="text-[9px] text-[#737373] font-medium">/sec</span>
@@ -1173,7 +865,7 @@ function Dashboard() {
             
             <div className="flex items-center h-full gap-3 px-3 border-l border-[#222222] min-[1200px]:px-5">
                <div className="flex flex-col justify-center gap-[2px]">
-                  <span className="text-[8px] text-[#A1A1AA] font-bold tracking-widest uppercase">Credits</span>
+                  <span className="text-[8px] text-[#A1A1AA] font-bold tracking-widest uppercase">App credits</span>
                   <div className="flex items-center gap-1.5">
                     <Coins className="w-3.5 h-3.5 text-blue-400" />
                     <span className="text-xs font-bold text-[#22C55E]">{Math.round(credits).toLocaleString()}</span>
@@ -1191,8 +883,8 @@ function Dashboard() {
             <div className="hidden items-center h-full gap-3 px-5 border-l border-[#0F284B] bg-[#0E1524] min-w-[140px] min-[1000px]:flex">
                <Clock className="w-4 h-4 text-[#3B82F6] stroke-[2.5]" />
                <div className="flex flex-col justify-center gap-[2px]">
-                  <span className="text-[8px] text-[#60A5FA] font-bold tracking-widest uppercase">Remaining</span>
-                  <span className="text-xs font-bold text-[#E5E5E5]">{formatTime(getRemainingSeconds())}</span>
+                  <span className="text-[8px] text-[#60A5FA] font-bold tracking-widest uppercase">Session limit</span>
+                  <span className="text-xs font-bold text-[#E5E5E5]">{MORPHLY_MAX_SESSION_SECONDS}s</span>
                </div>
             </div>
           </div>
@@ -1226,7 +918,7 @@ function Dashboard() {
                <p className="mt-1 text-sm text-[#8A8A8A]">
                  {uploadedImage
                    ? 'This prompt will be combined with your uploaded reference image.'
-                   : 'Describe how Lucy 2.5 should transform your camera output.'}
+                   : 'Describe how Morphly should transform your camera output.'}
                </p>
              </div>
 
@@ -1236,7 +928,7 @@ function Dashboard() {
                onChange={(event) => setPromptDraft(event.target.value)}
                maxLength={1000}
                rows={5}
-               placeholder={isSendingPrompt ? "Sending to AI..." : 'Describe how Lucy 2.5 should transform your camera output.'}
+               placeholder={isSendingPrompt ? "Sending to AI..." : 'Describe how Morphly should transform your camera output.'}
                className="mt-4 w-full resize-none rounded-lg border border-[#303030] bg-[#0F0F0F] p-3 text-sm text-white outline-none placeholder:text-[#555555] focus:border-[#4A4A4A]"
              />
 
