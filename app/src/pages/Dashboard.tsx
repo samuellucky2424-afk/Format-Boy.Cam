@@ -79,8 +79,6 @@ function Dashboard() {
   const isLoading = phase === 'starting';
   const isStopping = phase === 'stopping';
   const stopPending = phase === 'stop-pending';
-  const morphlyBalance = useSyncExternalStore(morphlySession.subscribe, morphlySession.getBalance);
-  const [morphlyStatus, setMorphlyStatus] = useState('Ready');
   const mountedRef = useRef(true);
   const [isObsMode, setIsObsMode] = useState(false);
   const [isGhostMode, setIsGhostMode] = useState(false);
@@ -397,7 +395,6 @@ function Dashboard() {
       return stream;
     } catch (error) {
       console.error('Webcam error:', error);
-      if (mountedRef.current) setMorphlyStatus('Morphly needs camera permission. Allow camera access, then press Start.');
       toast.error('Failed to access webcam. Please allow camera permissions.');
       return null;
     }
@@ -417,7 +414,6 @@ function Dashboard() {
     const attempt = morphlySession.attempt;
     const video = outputVideoRef.current;
     if (!video) throw Object.assign(new Error(), { code: 'VIDEO_PLAYBACK_FAILED' });
-    setMorphlyStatus('Loading Morphly');
     const { createMorphlyClient } = await import(/* @vite-ignore */ MORPHLY_SDK_URL)
       .catch(() => { throw Object.assign(new Error(), { code: 'SDK_LOAD_FAILED' }); });
     if (morphlySession.cancelled) return;
@@ -436,7 +432,6 @@ function Dashboard() {
       initialImage = await response.blob();
     }
     if (morphlySession.cancelled) return;
-    setMorphlyStatus('Connecting to Morphly');
     const session = await client.realtime.connect(stream, {
       output: video,
       model: MORPHLY_REALTIME_MODEL,
@@ -448,7 +443,6 @@ function Dashboard() {
       maxSessionSeconds: MORPHLY_MAX_SESSION_SECONDS,
       onStateChange: (state: string) => {
         if (attempt !== morphlySession.attempt) return;
-        if (mountedRef.current) setMorphlyStatus(`Morphly: ${state}`);
         if (state === 'disconnected' || state === 'failed') {
           // SDK also stops on expiry/disconnection. Await that same stop object.
           void handleStop(false);
@@ -457,7 +451,6 @@ function Dashboard() {
       onError: (error: unknown) => {
         if (attempt !== morphlySession.attempt) return;
         emitElectronLog('error', '[Morphly]', morphlyDiagnostic(error));
-        if (mountedRef.current) setMorphlyStatus(morphlyErrorMessage(error));
       },
     });
     morphlySession.attach(session);
@@ -528,7 +521,6 @@ function Dashboard() {
     }
     if (!morphlySession.begin()) return; // Synchronous guard against double clicks.
     let live = false;
-    setMorphlyStatus('Allow camera access to start Morphly');
     try {
       const stream = await startWebcam();
       if (!stream || morphlySession.cancelled) return;
@@ -551,13 +543,11 @@ function Dashboard() {
       if (pollIntervalRef.current) clearInterval(pollIntervalRef.current);
       // This is the existing app wallet policy, separate from SDK-owned Morphly billing.
       pollIntervalRef.current = setInterval(() => { void pollSessionStatus(); }, POLLING_INTERVAL);
-      setMorphlyStatus('Morphly live');
       toast.success('Connected to Morphly');
     } catch (error) {
       const message = morphlyErrorMessage(error);
       emitElectronLog('error', '[Morphly] Start failed', morphlyDiagnostic(error));
       if (mountedRef.current) {
-        setMorphlyStatus(message);
         toast.error(message);
       }
     } finally {
@@ -578,12 +568,10 @@ function Dashboard() {
       toast.dismiss('morphly-stop-pending');
       if (outputVideoRef.current) outputVideoRef.current.srcObject = null;
       if (mountedRef.current && showToast) {
-        setMorphlyStatus('Morphly stopped. Final usage and refunds may remain pending.');
         toast.info('Morphly stopped; settlement may still be pending.');
       }
     } catch (error) {
       if (mountedRef.current) {
-        setMorphlyStatus(morphlyErrorMessage(error));
         toast.error(morphlyErrorMessage(error));
       }
     }
@@ -732,18 +720,6 @@ function Dashboard() {
             id="image-upload"
           />
       </main>
-
-      <section aria-label="Morphly session status" className="border-t border-[#333] bg-[#111] px-4 py-2 text-xs">
-        <p role="status" className="text-gray-200">{stopPending
-          ? morphlySession.session ? 'Morphly stop pending. Use Retry Stop before starting again.' : 'App session close is pending. Use Retry Stop to finish.'
-          : morphlyStatus}</p>
-        <dl className="mt-2 flex flex-wrap gap-x-5 gap-y-1 text-gray-300">
-          {([['available_credits', 'Morphly available'], ['reserved_credits', 'Reserved'], ['charged_credits', 'Charged'], ['billable_seconds', 'Billable seconds']] as const).map(([key, label]) => (
-            <div key={key} className="flex gap-2"><dt>{label}</dt><dd>{morphlyBalance[key]?.toLocaleString() ?? 'Not reported'}</dd></div>
-          ))}
-        </dl>
-        <p className="mt-1 text-gray-400">Morphly reserves credits upfront. Available credits may stay unchanged while streaming; final usage and refunds may remain pending after Stop.</p>
-      </section>
 
       {/* Bottom Bar */}
       <footer className="min-h-[52px] bg-[#0A0A0A] flex flex-wrap items-stretch justify-between px-0 flex-shrink-0 relative z-10">

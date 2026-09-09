@@ -32,7 +32,13 @@ export default defineConfig(({ mode }) => {
         ? { 'import.meta.env.VITE_SUPABASE_ANON_KEY': JSON.stringify(localSupabaseAnonKey) }
         : {}),
     },
-    plugins: [inspectAttr(), react()],
+    // inspectAttr is a development-only inspection overlay. Keeping it out of
+    // the production build prevents its dev runtime from holding the build
+    // process open.
+    plugins: [
+      ...(mode === 'development' ? [inspectAttr()] : []),
+      react(),
+    ],
     resolve: {
       alias: {
         "@": path.resolve(__dirname, "./src"),

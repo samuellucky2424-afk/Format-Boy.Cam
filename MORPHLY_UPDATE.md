@@ -1,5 +1,13 @@
 # Morphly integration update
 
+## Current status after the approved live test
+
+The localhost desktop installer is now installed, both configured origins pass the deployed route's origin check, and the rate-limit table/function are available. The setup blockers in the earlier diagnosis below have been resolved.
+
+One approved live test used the physical HP camera and a 30-second session limit. Session creation returned HTTP 201; camera capture, WebRTC connection, outbound video, and heartbeats worked. No inbound video RTP stream or remote output track was observed. Stop was invoked at 28 seconds and both Morphly and app cleanup returned HTTP 200. The final UI is idle. The final Morphly charge was not reported by the UI.
+
+See [MORPHLY_LIVE_TEST.md](MORPHLY_LIVE_TEST.md) for the measurements, limitations, and a support message. The remaining failure is in the remote output path; the test does not establish whether the cause is generation, SDK subscription, or inbound transport. No further paid session was started.
+
 ## Latest live diagnosis (September 8, 2026)
 
 Rechecked the current Morphly guide, including both server and browser examples. The free validation endpoint returned HTTP 200 with `valid: true`, `realtime_configured: true`, and `session_creation_enabled: true`. The earlier maintenance screenshot does not establish that Morphly is still paused. Validation reports current configuration; it does not prove that a paid stream will connect.
