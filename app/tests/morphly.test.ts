@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import handler, { createMorphlySession, getRequestedDuration } from '../server/morphly-token.ts';
+import handler, { createMorphlySession, getRequestedDuration, normalizeMorphlyApiKey } from '../server/morphly-token.ts';
 import { MorphlySessionOwner, morphlyDiagnostic, morphlyErrorMessage, readMorphlyBalance } from '../src/lib/morphly-session.ts';
 import type { MorphlySession } from '../src/lib/morphly-session.ts';
 
@@ -124,6 +124,28 @@ test('upstream retries reuse one idempotency key and stop on 409', async () => {
       return Response.json({ code: keys.length === 1 ? 'UNAVAILABLE' : 'CONFLICT' }, { status: keys.length === 1 ? 502 : 409 });
     } });
   assert.deepEqual(keys, ['one-attempt', 'one-attempt']); assert.equal(result.response.status, 409);
+});
+test('a rejected Morphly server key is reported as a key failure, not a sign-in failure', async () => {
+  assert.equal(normalizeMorphlyApiKey('  "Bearer morph_live_example"  '), 'morph_live_example');
+  assert.equal(normalizeMorphlyApiKey('morph_live_ broken'), '');
+  let authorization = '';
+  const f = fixture({
+    morphlyApiKey: '  "Bearer morph_live_example"  ',
+    fetchImplementation: async (_url: string, init: RequestInit) => {
+      authorization = (init.headers as Record<string, string>).authorization;
+      return Response.json({ error: 'Invalid, expired, or revoked API key' }, { status: 401 });
+    },
+  });
+  await handler(f.req, f.res, f.options);
+  assert.equal(authorization, 'Bearer morph_live_example');
+  assert.equal(f.res.statusCode, 401);
+  assert.deepEqual(f.res.body, {
+    error: 'The Morphly API key on the server was rejected.',
+    code: 'MORPHLY_API_KEY_REJECTED',
+  });
+  assert.match(morphlyErrorMessage({ code: 'MORPHLY_API_KEY_REJECTED', status: 401 }), /server administrator/);
+  assert.doesNotMatch(morphlyErrorMessage({ code: 'HTTP_401', status: 401 }), /Sign in again/);
+  assert.match(morphlyErrorMessage({ code: 'APP_LOGIN_REQUIRED', status: 401 }), /Sign in again before starting Morphly/);
 });
 test('all upstream error statuses and bodies are forwarded intact', async () => {
   for (const status of [401, 402, 403, 409, 429, 502, 503]) {
