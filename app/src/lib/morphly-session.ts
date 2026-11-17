@@ -110,6 +110,7 @@ export function morphlyErrorMessage(error: unknown) {
     APP_LOGIN_REQUIRED: 'Sign in again before starting Morphly.',
     APP_ORIGIN_MISSING: 'Configure the Morphly application origins in server settings.',
     MORPHLY_API_KEY_MISSING: 'Configure MORPHLY_API_KEY in the server settings.',
+    MORPHLY_API_KEY_REJECTED: 'The Morphly key on the server was rejected. The server administrator needs to create a new live key and update the server settings.',
     RATE_LIMIT_UNAVAILABLE: 'Morphly rate limiting needs its server database migration.',
     VIDEO_PLAYBACK_BLOCKED: 'Morphly playback was blocked. Allow muted video playback and try again.',
     CAMERA_UNAVAILABLE: 'Morphly needs camera permission and HTTPS or localhost.',
@@ -117,7 +118,7 @@ export function morphlyErrorMessage(error: unknown) {
   };
   const statuses: Record<number, string> = {
     400: 'Morphly rejected the model, origin, or session duration.',
-    401: 'Sign in again, or have the server administrator validate the Morphly key.',
+    401: 'The Morphly key on the server was rejected. The server administrator needs to create a new live key and update the server settings.',
     402: 'Insufficient credits for Morphly. Check your app wallet and Morphly workspace balance.',
     403: 'Morphly access was denied. Check account access, realtime:create scope, and allowed origins.',
     409: 'The session request conflicts with an existing creation. Credentials cannot be replayed; do not retry automatically.',

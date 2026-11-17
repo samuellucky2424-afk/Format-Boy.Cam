@@ -22,6 +22,28 @@ export function getRequestedDuration(value) {
     value <= MAX_MORPHLY_SESSION_SECONDS ? value : null;
 }
 
+export function normalizeMorphlyApiKey(value) {
+  if (typeof value !== 'string') return '';
+
+  let key = value.trim();
+  if (key.length >= 2 &&
+      ((key.startsWith('"') && key.endsWith('"')) || (key.startsWith("'") && key.endsWith("'")))) {
+    key = key.slice(1, -1).trim();
+  }
+  key = key.replace(/^Bearer\s+/i, '').trim();
+  // Morphly hashes the exact bearer token. Internal whitespace cannot match a stored key.
+  if (!key || /\s/.test(key)) return '';
+  return key;
+}
+
+function upstreamErrorCode(result) {
+  return typeof result?.code === 'string' && /^[A-Z0-9_]{1,64}$/.test(result.code) ? result.code : null;
+}
+
+export function isUncodedMorphlyKeyRejection(status, result) {
+  return status === 401 && !upstreamErrorCode(result);
+}
+
 export function normalizeRequestedOrigin(value) {
   if (typeof value !== 'string') return '';
 
@@ -130,7 +152,7 @@ export default async function handler(req, res, options = {}) {
     });
   }
 
-  const morphlyApiKey = options.morphlyApiKey || process.env.MORPHLY_API_KEY;
+  const morphlyApiKey = normalizeMorphlyApiKey(options.morphlyApiKey || process.env.MORPHLY_API_KEY);
   if (!morphlyApiKey) {
     return res.status(500).json({
       error: 'Morphly is not configured on the server.',
@@ -224,11 +246,20 @@ export default async function handler(req, res, options = {}) {
     }
 
     if (!upstream.ok) {
+      const code = upstreamErrorCode(result);
       console.error('Morphly session creation failed:', {
         status: upstream.status,
-        code: typeof result?.code === 'string' && /^[A-Z0-9_]{1,64}$/.test(result.code) ? result.code : null,
+        code,
         attempts,
       });
+      // Morphly rejects a bad server key with HTTP 401 and no code. Forwarding
+      // that unchanged makes the desktop app tell a signed-in user to sign in again.
+      if (isUncodedMorphlyKeyRejection(upstream.status, result)) {
+        return res.status(401).json({
+          error: 'The Morphly API key on the server was rejected.',
+          code: 'MORPHLY_API_KEY_REJECTED',
+        });
+      }
       return res.status(upstream.status).json(result);
     }
 
