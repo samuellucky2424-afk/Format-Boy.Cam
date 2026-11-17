@@ -133,15 +133,24 @@ test('service setup error preserves body/status, without retries or replacement 
   await handler(f.req, f.res, f.options);
   assert.equal(attempts, 1); assert.equal(f.res.statusCode, 503); assert.deepEqual(f.res.body, body);
 });
-test('upstream retries reuse one idempotency key and stop on 409', async () => {
-  const keys: string[] = [];
-  const result = await createMorphlySession({ morphlyApiKey: 'fake', body: {}, idempotencyKey: 'one-attempt', waitImplementation: async () => {},
-    fetchImplementation: async (_url: string, init: RequestInit) => {
-      keys.push((init.headers as Record<string, string>)['idempotency-key']);
-      return Response.json({ code: keys.length === 1 ? 'UNAVAILABLE' : 'CONFLICT' }, { status: keys.length === 1 ? 502 : 409 });
-    } });
-  assert.deepEqual(keys, ['one-attempt', 'one-attempt']); assert.equal(result.response.status, 409);
+test('session creation never retries ambiguous failures or conflicts', async () => {
+  for (const status of [500, 501, 502, 503, 504, 409]) {
+    const keys: string[] = [];
+    const result = await createMorphlySession({ morphlyApiKey: 'fake', body: {}, idempotencyKey: 'one-attempt',
+      fetchImplementation: async (_url: string, init: RequestInit) => {
+        keys.push((init.headers as Record<string, string>)['idempotency-key']);
+        return Response.json({ code: `HTTP_${status}` }, { status });
+      } });
+    assert.deepEqual(keys, ['one-attempt']);
+    assert.equal(result.response.status, status);
+    assert.equal(result.attempts, 1);
+  }
 });
+
+test('missing app session has a distinct recovery message', () => {
+  assert.match(morphlyErrorMessage({ code: 'APP_SESSION_REQUIRED', status: 409 }), /app session is no longer active/);
+});
+
 test('a rejected Morphly server key is reported as a key failure, not a sign-in failure', async () => {
   assert.equal(normalizeMorphlyApiKey('  "Bearer morph_live_example"  '), 'morph_live_example');
   assert.equal(normalizeMorphlyApiKey('morph_live_ broken'), '');

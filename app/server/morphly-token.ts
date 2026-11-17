@@ -18,8 +18,6 @@ export function resolveRealtimeModel(value) {
   return null;
 }
 const MAX_MORPHLY_SESSION_SECONDS = 300;
-const MAX_MORPHLY_SESSION_ATTEMPTS = 3;
-const RETRYABLE_MORPHLY_STATUS_CODES = new Set([500, 501, 502, 503, 504]);
 
 function getRequestedUserId(req) {
   const queryUserId = Array.isArray(req.query?.userId)
@@ -72,58 +70,30 @@ export function normalizeRequestedOrigin(value) {
   }
 }
 
-function wait(milliseconds) {
-  return new Promise((resolve) => setTimeout(resolve, milliseconds));
-}
-
 export async function createMorphlySession({
   morphlyApiKey,
   body,
   idempotencyKey,
   fetchImplementation = fetch,
-  waitImplementation = wait,
 }) {
-  let lastResponse = null;
-  let lastResult = null;
-
-  for (let attempt = 1; attempt <= MAX_MORPHLY_SESSION_ATTEMPTS; attempt += 1) {
-    const response = await fetchImplementation(MORPHLY_SESSION_URL, {
-      method: 'POST',
-      headers: {
-        authorization: `Bearer ${morphlyApiKey}`,
-        'content-type': 'application/json',
-        // Reuse this key for every retry, so a late successful attempt cannot
-        // create more than one provider session.
-        'idempotency-key': idempotencyKey,
-      },
-      body: JSON.stringify(body),
-      cache: 'no-store',
-      signal: AbortSignal.timeout(20_000),
-    });
-
-    const result = await response.json().catch(() => ({
-      error: `Morphly returned HTTP ${response.status}`,
-      code: `HTTP_${response.status}`,
-    }));
-
-    if (response.ok || result?.code === 'REALTIME_SETUP_REQUIRED' ||
-        !RETRYABLE_MORPHLY_STATUS_CODES.has(response.status)) {
-      return { response, result, attempts: attempt };
-    }
-
-    lastResponse = response;
-    lastResult = result;
-
-    if (attempt < MAX_MORPHLY_SESSION_ATTEMPTS) {
-      await waitImplementation(250 * attempt);
-    }
-  }
-
-  return {
-    response: lastResponse,
-    result: lastResult,
-    attempts: MAX_MORPHLY_SESSION_ATTEMPTS,
-  };
+  // Creation can succeed before an upstream 5xx is returned. Morphly does not
+  // replay credentials on retry (it returns 409), so send only one request.
+  const response = await fetchImplementation(MORPHLY_SESSION_URL, {
+    method: 'POST',
+    headers: {
+      authorization: `Bearer ${morphlyApiKey}`,
+      'content-type': 'application/json',
+      'idempotency-key': idempotencyKey,
+    },
+    body: JSON.stringify(body),
+    cache: 'no-store',
+    signal: AbortSignal.timeout(20_000),
+  });
+  const result = await response.json().catch(() => ({
+    error: `Morphly returned HTTP ${response.status}`,
+    code: `HTTP_${response.status}`,
+  }));
+  return { response, result, attempts: 1 };
 }
 
 export default async function handler(req, res, options = {}) {
@@ -264,7 +234,6 @@ export default async function handler(req, res, options = {}) {
       body: upstreamBody,
       idempotencyKey: crypto.randomUUID(),
       fetchImplementation: options.fetchImplementation,
-      waitImplementation: options.waitImplementation,
     });
 
     if (!upstream) {

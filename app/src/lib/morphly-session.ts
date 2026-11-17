@@ -126,6 +126,7 @@ function shownCode(code: string) {
 export function morphlyErrorMessage(error: unknown) {
   const { code, status } = morphlyDiagnostic(error);
   const messages: Record<string, string> = {
+    APP_SESSION_REQUIRED: 'The app session is no longer active. Stop, then start a new session.',
     REALTIME_SETUP_REQUIRED: 'Live video needs a server update. Contact support with REALTIME_SETUP_REQUIRED.',
     SESSION_STOP_PENDING: 'Stop is unconfirmed. Retry Stop; usage and refunds may remain pending.',
     APP_SESSION_STOP_PENDING: 'The live session stopped, but the app session could not close. Use Retry Stop to finish.',
@@ -153,7 +154,7 @@ export function morphlyErrorMessage(error: unknown) {
     401: 'The live video key on the server was rejected. The server administrator needs to create a new key and update the server settings.',
     402: 'Not enough credits to start. Check your access plan and credit balance.',
     403: 'Live video access was denied. Check the account and allowed origins.',
-    409: 'This session request conflicts with one already started. Do not retry automatically.',
+    409: 'The live service already created this request, but could not return its connection details. Wait for the previous session to expire before starting again.',
     429: 'The start limit was reached. Wait before trying again.',
     502: 'The live session could not be created. Try again shortly.',
     503: 'Live sessions are currently unavailable.',
