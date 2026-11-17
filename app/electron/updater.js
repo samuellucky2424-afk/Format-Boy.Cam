@@ -5,7 +5,7 @@ import fs from 'fs';
 import path from 'path';
 import { Readable } from 'stream';
 
-export const CURRENT_VERSION = '2.0.20';
+export const CURRENT_VERSION = '2.0.29';
 
 const DEFAULT_VERSION_ENDPOINT = 'https://format-boy-cam.vercel.app/api/version';
 const DEFAULT_DOWNLOAD_URL = 'https://mega.nz/file/yDZVDBQJ#jOM2bnxJuGUqBp3qri_8sCgFGJb3pbEiIv-4DI-WZA8';

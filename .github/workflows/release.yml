@@ -26,7 +26,7 @@ jobs:
       - name: Set up Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: '18'
+          node-version: '22'
 
       - name: Sync app version from tag
         working-directory: ./app
@@ -97,6 +97,10 @@ jobs:
           VITE_SUPABASE_URL: ${{ secrets.VITE_SUPABASE_URL }}
           VITE_SUPABASE_ANON_KEY: ${{ secrets.VITE_SUPABASE_ANON_KEY }}
 
+      - name: Verify session integration and desktop assets
+        working-directory: ./app
+        run: npm run test:morphly
+
       - name: Find built installer
         id: find_installer
         shell: powershell
@@ -133,7 +137,11 @@ jobs:
           files: ${{ steps.find_installer.outputs.exe_path }}
           body: |
             ## CALL ME ${{ github.ref_name }}
-            
+
+            - Updated desktop model names to M2.1 and M2.5.
+            - Default prompt: Become the character in the reference image
+            - Prevented automatic session-creation retries from hiding upstream failures.
+
             **SHA256:** `${{ steps.sha256.outputs.hash }}`
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
