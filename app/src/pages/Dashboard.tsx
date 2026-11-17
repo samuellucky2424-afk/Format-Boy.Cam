@@ -87,7 +87,7 @@ function Dashboard() {
   const [selectedCameraId, setSelectedCameraId] = useState<string>('');
   const [cameraDiscoveryMessage, setCameraDiscoveryMessage] = useState('Finding cameras...');
   const [liveModel, setLiveModel] = useState<LiveModelId>(() => loadLiveModel());
-  const [prompt, setPrompt] = useState('A person looking professional');
+  const [prompt, setPrompt] = useState('Become the character in the reference image');
   const [promptDraft, setPromptDraft] = useState(prompt);
   const [isPromptModalOpen, setIsPromptModalOpen] = useState(false);
   const [isSendingPrompt, setIsSendingPrompt] = useState(false);
