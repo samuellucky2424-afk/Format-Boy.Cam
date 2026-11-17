@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { ArrowLeft, ArrowRight, Coins, Loader2, LogIn, LogOut } from 'lucide-react';
+import { ArrowLeft, ArrowRight, CalendarClock, Loader2, LogIn, LogOut } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import { toast } from 'sonner';
 
@@ -11,35 +11,15 @@ import { ROUTES } from '@/lib/routes';
 import { isFiniteNumber } from '@/lib/utils';
 import { supabase } from '@/lib/supabase';
 import { CryptoPaymentModal } from '@/components/CryptoPaymentModal';
-
-interface CreditPlan {
-  id: string;
-  credits: number;
-  priceNGN: number;
-  priceUSD: number;
-  name?: string;
-  duration_minutes?: number;
-}
-
-function formatTime(credits: number): string {
-  const seconds = credits / 2;
-  const minutes = Math.floor(seconds / 60);
-  const remainingSeconds = seconds % 60;
-
-  if (minutes > 0) {
-    return `~${minutes}m ${remainingSeconds}s`;
-  }
-
-  return `~${remainingSeconds}s`;
-}
+import { accessLabel, formatPlanPrice, type AccessPlanView } from '@/lib/access-plans';
 
 function Subscription() {
   const navigate = useNavigate();
   const { user, logout, loading: authLoading } = useAuth();
   const { refreshCredits } = useApp();
-  const [plans, setPlans] = useState<CreditPlan[]>([]);
+  const [plans, setPlans] = useState<AccessPlanView[]>([]);
   const [loadingPlans, setLoadingPlans] = useState(true);
-  const [selectedPlan, setSelectedPlan] = useState<CreditPlan | null>(null);
+  const [selectedPlan, setSelectedPlan] = useState<AccessPlanView | null>(null);
   const [isProcessing, setIsProcessing] = useState(false);
 
   useEffect(() => {
@@ -47,24 +27,24 @@ function Subscription() {
       try {
         const { data, error } = await supabase
           .from('credit_packages')
-          .select('id, credits, price_ngn, price_usd, name')
+          .select('id, name, price_ngn, price_usd, duration_days, plan_code')
           .eq('is_active', true)
-          .order('sort_order', { ascending: true })
-          .order('credits', { ascending: true });
+          .order('sort_order', { ascending: true });
 
         if (error) throw error;
         if (data) {
           setPlans(data.map(p => ({
             id: p.id,
-            credits: p.credits,
+            name: p.name || 'Plan',
             priceNGN: Number(p.price_ngn),
             priceUSD: Number(p.price_usd || 0),
-            name: p.name
+            durationDays: p.duration_days == null ? null : Number(p.duration_days),
+            planCode: p.plan_code,
           })));
         }
       } catch (err) {
         console.error('Failed to load plans:', err);
-        toast.error('Failed to load credit packages.');
+        toast.error('Failed to load plans.');
       } finally {
         setLoadingPlans(false);
       }
@@ -72,7 +52,7 @@ function Subscription() {
     loadPlans();
   }, []);
 
-  const handleSelectPlan = (plan: CreditPlan) => {
+  const handleSelectPlan = (plan: AccessPlanView) => {
     setSelectedPlan(plan);
   };
 
@@ -89,7 +69,7 @@ function Subscription() {
     if (!selectedPlan) return;
 
     if (!user) {
-      toast.error('Please log in to purchase credits.');
+      toast.error('Please log in to choose a plan.');
       navigate(ROUTES.PUBLIC.LOGIN);
       return;
     }
@@ -138,27 +118,26 @@ function Subscription() {
         </div>
 
         <div className="mb-12">
-          <h1 className="text-3xl font-bold text-white mb-2 tracking-tight">Purchase Credits</h1>
+          <h1 className="text-3xl font-bold text-white mb-2 tracking-tight">Choose a plan</h1>
           <p className="text-sm text-[#a1a1aa]">
             {user
-              ? `Signed in as ${user.email}. Select credits to power your AI transformations`
-              : 'Select credits to power your AI transformations'}
+              ? `Signed in as ${user.email}. Pick how long you want access.`
+              : 'Pick how long you want access.'}
           </p>
         </div>
 
         <div className="mb-8">
-          <label className="block text-sm font-medium text-[#a1a1aa] mb-3">Select Credits</label>
-          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
+          <label className="block text-sm font-medium text-[#a1a1aa] mb-3">Plans</label>
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
             {loadingPlans ? (
               <div className="col-span-full text-center py-8 text-[#71717a]">Loading plans...</div>
             ) : (
               plans.map((plan) => {
-                const isSelected = selectedPlan?.credits === plan.credits;
-                const priceNGN = plan.priceNGN;
+                const isSelected = selectedPlan?.id === plan.id;
 
                 return (
                   <button
-                    key={plan.credits}
+                    key={plan.id}
                     onClick={() => handleSelectPlan(plan)}
                     className={`p-5 rounded-xl border text-left transition-all duration-200 ${
                       isSelected
@@ -172,17 +151,16 @@ function Subscription() {
                           isSelected ? 'bg-blue-500/20' : 'bg-[#27272a]'
                         }`}
                       >
-                        <Coins className={`w-5 h-5 ${isSelected ? 'text-blue-400' : 'text-[#71717a]'}`} />
+                        <CalendarClock className={`w-5 h-5 ${isSelected ? 'text-blue-400' : 'text-[#71717a]'}`} />
                       </div>
                       <div>
-                        <span className="text-lg font-bold text-white leading-tight block">{plan.credits.toLocaleString()} Credits</span>
-                        <span className="text-xs text-[#71717a] block mt-0.5">{formatTime(plan.credits)}</span>
+                        <span className="text-lg font-bold text-white leading-tight block">{plan.name}</span>
+                        <span className="text-xs text-[#71717a] block mt-0.5">{accessLabel(plan.durationDays, plan.planCode)}</span>
                       </div>
                     </div>
                     <div className="flex items-center gap-2 mt-4">
                        <span className="text-2xl font-bold text-white">
-                         ${plan.priceUSD > 0 ? plan.priceUSD.toLocaleString() : plan.priceNGN.toLocaleString()}
-                         {plan.priceUSD === 0 && ' NGN'}
+                         {formatPlanPrice(plan)}
                        </span>
                     </div>
                   </button>
@@ -193,17 +171,13 @@ function Subscription() {
         </div>
 
         <div className="bg-[#131316] border border-[#27272a] rounded-xl p-5 mb-8">
-          <h3 className="text-sm font-semibold text-white mb-2">How credits work</h3>
+          <h3 className="text-sm font-semibold text-white mb-2">How access works</h3>
           <ul className="text-sm text-[#a1a1aa] space-y-1">
-            <li>- 2 credits are deducted per second of stream time</li>
-            <li>- 500 credits is about 4 minutes 10 seconds</li>
-            <li>- 1000 credits is about 8 minutes 20 seconds</li>
-            <li>- Credits never expire</li>
+            <li>- $100 gives 14 days of access</li>
+            <li>- $250 gives 30 days of access</li>
+            <li>- $500 does not expire</li>
+            <li>- Buying another timed plan extends the current end date</li>
           </ul>
-        </div>
-
-        <div className="text-center">
-          <p className="text-sm text-[#71717a] mb-4">All purchases are one-time. No subscriptions or hidden fees.</p>
         </div>
       </div>
 
@@ -213,9 +187,9 @@ function Subscription() {
             <div className="flex flex-col">
               <span className="text-sm text-[#a1a1aa] font-medium">Selected Plan</span>
               <span className="text-xl font-bold text-white tracking-tight">
-                {selectedPlan.credits.toLocaleString()} Credits <span className="text-blue-500 font-normal mx-1">/</span> ₦{selectedPlan.priceNGN.toLocaleString()}
+                {selectedPlan.name} <span className="text-blue-500 font-normal mx-1">/</span> {formatPlanPrice(selectedPlan)}
               </span>
-              <span className="text-xs text-[#71717a] mt-1">{formatTime(selectedPlan.credits)} estimated time</span>
+              <span className="text-xs text-[#71717a] mt-1">{accessLabel(selectedPlan.durationDays, selectedPlan.planCode)}</span>
             </div>
             <Button
               onClick={handleProceedToPayment}

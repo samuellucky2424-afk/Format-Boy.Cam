@@ -1,10 +1,9 @@
--- Clean up all existing plans first to prevent duplicates
+-- Access plans. duration_minutes is kept for the legacy plans table:
+-- 14 days, 30 days, and unlimited (duration_minutes 0 means no expiry).
 DELETE FROM public.plans;
 
--- Seed the plans table with Format-Boy Cam credit packs
 INSERT INTO public.plans (name, price, credits, duration_minutes, usd_price)
 VALUES
-  ('Starter', 14000, 500, 4, 10.00),
-  ('Basic', 28000, 1000, 8, 20.00),
-  ('Pro', 56000, 2000, 16, 40.00),
-  ('Enterprise', 140000, 5000, 40, 100.00);
+  ('2 Weeks', 100, 0, 20160, 100.00),
+  ('30 Days', 250, 0, 43200, 250.00),
+  ('Unlimited', 500, 0, 0, 500.00);

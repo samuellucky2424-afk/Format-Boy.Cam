@@ -1,6 +1,7 @@
 // @ts-nocheck
 import { supabaseAdmin, supabaseAdminConfigError } from './supabase.js';
 import { getWalletByUserId } from './credit-utils.js';
+import { getActiveAccess } from './access.js';
 
 const CREDITS_PER_SECOND = 2;
 const MAX_SESSION_DURATION = 600;
@@ -78,8 +79,11 @@ export default async function handler(req, res) {
     const cost = Math.round(elapsedSeconds * CREDITS_PER_SECOND);
     
     const remainingCredits = Math.max(0, actualCredits - cost);
-    const shouldStop = remainingCredits <= 0 || elapsedSeconds >= MAX_SESSION_DURATION;
-    const forceEnd = remainingCredits <= 0;
+    const access = await getActiveAccess(supabaseAdmin, userId);
+    const shouldStop = access
+      ? elapsedSeconds >= MAX_SESSION_DURATION
+      : remainingCredits <= 0 || elapsedSeconds >= MAX_SESSION_DURATION;
+    const forceEnd = access ? false : remainingCredits <= 0;
 
     res.json({ secondsUsed: elapsedSeconds, creditsUsed: cost, cost, remainingCredits, credits: remainingCredits, shouldStop, forceEnd });
   } catch (error) {

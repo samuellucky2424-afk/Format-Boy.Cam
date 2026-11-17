@@ -36,7 +36,7 @@ export function Navigation({ children }: NavigationProps) {
   const navItems: NavItem[] = [
     { path: ROUTES.PROTECTED.DASHBOARD, label: 'Dashboard', icon: LayoutDashboard },
     { path: ROUTES.PROTECTED.WALLET, label: 'Credits', icon: Coins },
-    { path: ROUTES.PROTECTED.SUBSCRIPTION, label: 'Buy Credits', icon: CreditCard },
+    { path: ROUTES.PROTECTED.SUBSCRIPTION, label: 'Plans', icon: CreditCard },
     { path: ROUTES.PROTECTED.SETTINGS, label: 'Settings', icon: Settings },
   ];
 

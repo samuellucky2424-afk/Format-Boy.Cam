@@ -79,7 +79,7 @@ export default async function handler(req, res) {
     const [packageResult, methodResult] = await Promise.all([
       supabaseAdmin
         .from('credit_packages')
-        .select('id, credits, price_ngn, price_usd')
+        .select('id, credits, price_ngn, price_usd, plan_code, duration_days')
         .eq('id', packageId)
         .eq('is_active', true)
         .maybeSingle(),
@@ -106,8 +106,11 @@ export default async function handler(req, res) {
     const currency = usdAmount > 0 ? 'USD' : 'NGN';
     const credits = Number(creditPackage.credits);
 
-    if (!Number.isFinite(amount) || amount <= 0 || !Number.isFinite(credits) || credits <= 0) {
-      return res.status(500).json({ error: 'The selected package has invalid pricing.' });
+    const isAccessPlan = creditPackage.plan_code === 'two_weeks'
+      || creditPackage.plan_code === 'thirty_days'
+      || creditPackage.plan_code === 'unlimited';
+    if (!Number.isFinite(amount) || amount <= 0 || (!isAccessPlan && (!Number.isFinite(credits) || credits <= 0))) {
+      return res.status(500).json({ error: 'The selected plan has invalid pricing.' });
     }
 
     const { data: payment, error: insertError } = await supabaseAdmin

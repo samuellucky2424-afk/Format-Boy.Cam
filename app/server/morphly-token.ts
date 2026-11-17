@@ -1,6 +1,7 @@
 // @ts-nocheck -- Vercel/Express route follows the repository's untyped server convention.
 import { supabaseAdmin, supabaseAdminConfigError } from '../api/supabase.js';
 import { getWalletByUserId } from '../api/credit-utils.js';
+import { getActiveAccess } from '../api/access.js';
 
 const MORPHLY_SESSION_URL = 'https://api.morphly.fun/v1/realtime/sessions';
 const MORPHLY_REALTIME_MODEL = 'morphly-realtime';
@@ -186,10 +187,11 @@ export default async function handler(req, res, options = {}) {
       return res.status(400).json({ error: 'Use a supported Morphly model and an integer duration from 1 to 300 seconds.', code: 'INVALID_SESSION_REQUEST' });
     }
     const wallet = await (options.getWallet || getWalletByUserId)(userId, { createIfMissing: true });
-    if (!wallet || wallet.credits <= 0) {
+    const access = await (options.getAccess || getActiveAccess)(admin, userId);
+    if ((!wallet || wallet.credits <= 0) && !access) {
       return res.status(402).json({
-        error: 'Insufficient credits',
-        code: 'INSUFFICIENT_CREDITS',
+        error: 'Your plan has expired. Choose a plan to keep streaming.',
+        code: 'PLAN_EXPIRED',
       });
     }
 
