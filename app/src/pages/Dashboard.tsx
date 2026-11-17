@@ -1,6 +1,6 @@
 import { useState, useRef, useEffect, useCallback, useSyncExternalStore } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Upload, Play, Square, Clock, Zap, Monitor, Plus, Coins, Minus, X, Settings, Eye, EyeOff, Camera, MessageSquare } from 'lucide-react';
+import { Upload, Play, Square, Clock, Zap, Monitor, Plus, Coins, Minus, X, Settings, Eye, EyeOff, Camera } from 'lucide-react';
 import { toast } from 'sonner';
 import { useAuth } from '@/context/AuthContext';
 import { useApp } from '@/context/AppContext';
@@ -89,10 +89,7 @@ function Dashboard() {
   const [selectedCameraId, setSelectedCameraId] = useState<string>('');
   const [cameraDiscoveryMessage, setCameraDiscoveryMessage] = useState('Finding cameras...');
   const [liveModel, setLiveModel] = useState<LiveModelId>(() => loadLiveModel());
-  const [prompt, setPrompt] = useState('Become the character in the reference image');
-  const [promptDraft, setPromptDraft] = useState(prompt);
-  const [isPromptModalOpen, setIsPromptModalOpen] = useState(false);
-  const [isSendingPrompt, setIsSendingPrompt] = useState(false);
+  const prompt = 'Become the character in the reference image';
   const fileInputRef = useRef<HTMLInputElement>(null);
   const webcamVideoRef = useRef<HTMLVideoElement>(null);
   const outputVideoRef = useRef<HTMLVideoElement>(null);
@@ -618,39 +615,6 @@ function Dashboard() {
     }
   };
 
-  const openPromptModal = () => {
-    setPromptDraft(prompt);
-    setIsPromptModalOpen(true);
-  };
-
-  const handlePromptSubmit = async (event: React.FormEvent<HTMLFormElement>) => {
-    event.preventDefault();
-    const nextPrompt = promptDraft.trim();
-
-    if (!nextPrompt) {
-      toast.error('Enter a prompt before sending.');
-      return;
-    }
-    if (!isStreaming || !morphlySession.session) {
-      toast.error('Start a camera session before sending a prompt.');
-      return;
-    }
-
-    setIsSendingPrompt(true);
-    try {
-      await applyMorphlyInput(morphlySession.session, liveModel, nextPrompt, uploadedImageRef.current);
-
-      setPrompt(nextPrompt);
-      setIsPromptModalOpen(false);
-      toast.success('Prompt sent.');
-    } catch (error) {
-      emitElectronLog('error', '[Morphly] Prompt update failed', morphlyDiagnostic(error));
-      toast.error('Could not send the prompt.');
-    } finally {
-      setIsSendingPrompt(false);
-    }
-  };
-
   return (
     <div className="w-screen h-screen bg-[#111111] flex flex-col font-sans text-white overflow-hidden">
       {/* Header */}
@@ -817,16 +781,6 @@ function Dashboard() {
                <span className="hidden font-medium text-[13px] min-[1200px]:inline">{isGhostMode ? 'Ghost Mode On' : 'Ghost Mode'}</span>
               </button>
 
-             <button
-               onClick={openPromptModal}
-               disabled={!isStreaming || liveModel === 'm2'}
-               title={liveModel === 'm2' ? 'M2.5 uses the uploaded image' : isStreaming ? 'Write and send a prompt' : 'Start a session to send a prompt'}
-               className="ml-1 h-[34px] min-w-[122px] shrink-0 px-4 flex items-center justify-center gap-2 rounded-sm border bg-[#1E1E1E] border-[#2A2A2A] text-[#A3A3A3] hover:border-[#3A3A3A] hover:text-white transition-all disabled:cursor-not-allowed disabled:opacity-40 disabled:hover:border-[#2A2A2A] disabled:hover:text-[#A3A3A3]"
-             >
-               <MessageSquare className="w-3.5 h-3.5 opacity-80" />
-               <span className="font-medium text-[13px]">Send Prompt</span>
-             </button>
-
              <button 
                onClick={() => fileInputRef.current?.click()}
                title={uploadedImage ? `Change reference image: ${uploadedImage.name}` : 'Upload image'}
@@ -886,73 +840,7 @@ function Dashboard() {
           </div>
        </footer>
 
-       {isPromptModalOpen && (
-         <div
-           className="fixed inset-0 z-[120] flex items-center justify-center bg-black/75 px-4 backdrop-blur-sm app-region-no-drag"
-           onMouseDown={(event) => {
-             if (event.target === event.currentTarget && !isSendingPrompt) {
-               setIsPromptModalOpen(false);
-             }
-           }}
-         >
-           <form
-             onSubmit={handlePromptSubmit}
-             className="relative w-full max-w-lg rounded-xl border border-[#2A2A2A] bg-[#151515] p-5 shadow-2xl"
-           >
-             <button
-               type="button"
-               aria-label="Close prompt form"
-               disabled={isSendingPrompt}
-               onClick={() => setIsPromptModalOpen(false)}
-               className="absolute right-4 top-4 text-[#737373] hover:text-white disabled:opacity-50"
-             >
-               <X className="h-5 w-5" />
-             </button>
 
-             <div className="pr-8">
-               <h2 className="text-lg font-semibold text-white">Send a prompt</h2>
-               <p className="mt-1 text-sm text-[#8A8A8A]">
-                 {uploadedImage
-                   ? 'This prompt will be combined with your uploaded reference image.'
-                   : 'Describe how the camera output should look.'}
-               </p>
-             </div>
-
-             <textarea
-               autoFocus
-               value={promptDraft}
-               onChange={(event) => setPromptDraft(event.target.value)}
-               maxLength={1000}
-               rows={5}
-               placeholder={isSendingPrompt ? "Sending to AI..." : 'Describe how the camera output should look.'}
-               className="mt-4 w-full resize-none rounded-lg border border-[#303030] bg-[#0F0F0F] p-3 text-sm text-white outline-none placeholder:text-[#555555] focus:border-[#4A4A4A]"
-             />
-
-             <div className="mt-2 flex items-center justify-between">
-               <span className="text-xs text-[#666666]">{promptDraft.length}/1000</span>
-               <span className="text-xs text-[#666666]">Sends immediately to the live session</span>
-             </div>
-
-             <div className="mt-5 flex justify-end gap-2">
-               <button
-                 type="button"
-                 disabled={isSendingPrompt}
-                 onClick={() => setIsPromptModalOpen(false)}
-                 className="h-10 rounded-md border border-[#303030] px-4 text-sm font-medium text-[#A3A3A3] hover:text-white disabled:opacity-50"
-               >
-                 Cancel
-               </button>
-               <button
-                 type="submit"
-                 disabled={isSendingPrompt || !promptDraft.trim()}
-                 className="h-10 min-w-[120px] rounded-md bg-[#22C55E] px-5 text-sm font-semibold text-[#07120A] hover:bg-[#34D66F] disabled:cursor-not-allowed disabled:opacity-50"
-               >
-                 {isSendingPrompt ? 'Sending...' : 'Send Prompt'}
-               </button>
-             </div>
-           </form>
-         </div>
-       )}
      </div>
   );
 }
