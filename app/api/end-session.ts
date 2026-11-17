@@ -1,6 +1,7 @@
 // @ts-nocheck
 import { supabaseAdmin, supabaseAdminConfigError } from './supabase.js';
 import { getWalletByUserId, logCreditUpdate, updateWalletCredits } from './credit-utils.js';
+import { getActiveAccess } from './access.js';
 
 const CREDITS_PER_SECOND = 2;
 const MAX_SESSION_DURATION = 600;
@@ -57,7 +58,8 @@ async function closeActiveSession(userId, activeSession) {
       : CREDITS_PER_SECOND;
     const cost = Math.round(elapsedSeconds * creditsPerSecond);
     
-    const finalCost = Math.min(actualCredits, cost);
+    const access = await getActiveAccess(supabaseAdmin, userId);
+    const finalCost = access ? 0 : Math.min(actualCredits, cost);
     const newCredits = Math.max(0, actualCredits - finalCost);
 
     await supabaseAdmin
@@ -79,7 +81,14 @@ async function closeActiveSession(userId, activeSession) {
       before: actualCredits,
       after: updatedWallet.credits,
       change: -finalCost,
-      source: 'session-end',
+      source: access ? 'session-end-access-plan' : 'session-end',
+    });
+    console.info('[end-session]', {
+      userId,
+      deducted: finalCost,
+      seconds: elapsedSeconds,
+      accessPlan: access?.plan_name || null,
+      realtime: realtimeCredentialIssued,
     });
 
     if (finalCost > 0) {

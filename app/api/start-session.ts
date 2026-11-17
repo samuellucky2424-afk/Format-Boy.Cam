@@ -114,7 +114,10 @@ export default async function handler(req, res) {
 
   try {
     const { userId } = req.body;
-    if (!userId) return res.status(400).json({ allowed: false, error: 'User ID is required' });
+    if (!userId) {
+      console.info('[start-session]', { outcome: 'denied', reason: 'USER_ID_REQUIRED' });
+      return res.status(400).json({ allowed: false, error: 'User ID is required' });
+    }
 
     const { data: existingActiveSessions } = await supabaseAdmin
       .from('sessions').select('*').eq('user_id', userId).eq('status', 'active');
@@ -123,6 +126,7 @@ export default async function handler(req, res) {
       for (const session of existingActiveSessions) {
         const closeResult = await closeActiveSession(userId, session);
         if (!closeResult.success) {
+          console.info('[start-session]', { outcome: 'denied', reason: 'ACTIVE_SESSION_CLOSE_FAILED', userId });
           return res.status(500).json({ allowed: false, error: closeResult.message || 'Failed to reconcile active session' });
         }
       }
@@ -130,6 +134,7 @@ export default async function handler(req, res) {
 
     const freshWallet = await getWalletByUserId(userId, { createIfMissing: true });
     if (!freshWallet) {
+      console.info('[start-session]', { outcome: 'denied', reason: 'WALLET_NOT_FOUND', userId });
       return res.status(404).json({ allowed: false, error: 'Wallet not found' });
     }
 
@@ -137,6 +142,7 @@ export default async function handler(req, res) {
     const access = await getActiveAccess(supabaseAdmin, userId);
 
     if (!access && currentCredits <= 0) {
+      console.info('[start-session]', { outcome: 'denied', reason: 'PLAN_EXPIRED', credits: currentCredits });
       return res.json({ allowed: false, error: 'Your plan has expired. Choose a plan to keep streaming.', credits: currentCredits });
     }
 
@@ -146,11 +152,15 @@ export default async function handler(req, res) {
         user_id: userId, status: 'active', start_time: new Date().toISOString(), cost: 0, seconds_used: 0
       }).select('id').single();
 
-    if (sessionError) return res.status(500).json({ allowed: false, error: 'Failed to create session' });
+    if (sessionError) {
+      console.info('[start-session]', { outcome: 'denied', reason: 'SESSION_INSERT_FAILED', userId });
+      return res.status(500).json({ allowed: false, error: 'Failed to create session' });
+    }
 
+    console.info('[start-session]', { outcome: 'allowed', userId, hasAccess: Boolean(access), credits: currentCredits, sessionId: newSession.id });
     res.json({ allowed: true, sessionId: newSession.id, credits: currentCredits });
   } catch (error) {
-    console.error('Start session error:', error);
+    console.error('[start-session]', { outcome: 'error', message: error instanceof Error ? error.message : 'unknown' });
     res.status(500).json({ allowed: false, error: 'Internal server error' });
   }
 }

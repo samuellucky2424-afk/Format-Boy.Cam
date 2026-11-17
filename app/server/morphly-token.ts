@@ -4,7 +4,19 @@ import { getWalletByUserId } from '../api/credit-utils.js';
 import { getActiveAccess } from '../api/access.js';
 
 const MORPHLY_SESSION_URL = 'https://api.morphly.fun/v1/realtime/sessions';
-const MORPHLY_REALTIME_MODEL = 'morphly-realtime';
+const PROMPT_MODEL = 'M 2.1';
+const SUBJECT_MODEL = 'M2.5';
+const LEGACY_PROMPT_MODELS = new Set(['lucy-2.5', 'morphly-realtime']);
+
+export function resolveRealtimeModel(value) {
+  if (value == null || value === '') return PROMPT_MODEL;
+  if (typeof value !== 'string') return null;
+  if (LEGACY_PROMPT_MODELS.has(value)) return value;
+  const compact = value.replace(/\s/g, '').toLowerCase();
+  if (compact === 'm2.1') return PROMPT_MODEL;
+  if (compact === 'm2.5') return SUBJECT_MODEL;
+  return null;
+}
 const MAX_MORPHLY_SESSION_SECONDS = 300;
 const MAX_MORPHLY_SESSION_ATTEMPTS = 3;
 const RETRYABLE_MORPHLY_STATUS_CODES = new Set([500, 501, 502, 503, 504]);
@@ -116,6 +128,10 @@ export async function createMorphlySession({
 
 export default async function handler(req, res, options = {}) {
   const admin = options.admin || supabaseAdmin;
+  const logged = (status, body) => {
+    console.info('[morphly-token]', { status, code: body?.code || null });
+    return res.status(status).json(body);
+  };
   res.setHeader('Cache-Control', 'no-store');
   res.setHeader('Vary', 'Origin');
   res.setHeader('Access-Control-Allow-Methods', 'POST, OPTIONS');
@@ -126,28 +142,28 @@ export default async function handler(req, res, options = {}) {
   const allowedOrigins = [appOrigin, desktopOrigin].filter(Boolean);
   if (!appOrigin || allowedOrigins.some((origin) => normalizeRequestedOrigin(origin) !== origin) ||
       (desktopOrigin && desktopOrigin !== 'http://localhost:5173')) {
-    return res.status(503).json({ error: 'Configure exact Morphly application origins on the server.', code: 'APP_ORIGIN_MISSING' });
+    return logged(503, { error: 'Configure the exact application origins on the server.', code: 'APP_ORIGIN_MISSING' });
   }
   // Select only an exact server-configured origin. Never infer it from the body.
   const origin = allowedOrigins.find((value) => value === req.headers?.origin);
   if (!origin || (req.body?.origin !== undefined && req.body.origin !== origin)) {
-    return res.status(403).json({ error: 'Morphly origin is not allowed.', code: 'ORIGIN_NOT_ALLOWED' });
+    return logged(403, { error: 'This app origin is not allowed.', code: 'ORIGIN_NOT_ALLOWED' });
   }
   res.setHeader('Access-Control-Allow-Origin', origin);
 
   if (req.method === 'OPTIONS') return res.status(200).end();
   if (req.method !== 'POST') {
-    return res.status(405).json({
+    return logged(405, {
       error: 'Method not allowed',
       code: 'METHOD_NOT_ALLOWED',
     });
   }
   if (req.body != null && (typeof req.body !== 'object' || Array.isArray(req.body))) {
-    return res.status(400).json({ error: 'Send a JSON object to start Morphly.', code: 'INVALID_SESSION_REQUEST' });
+    return logged(400, { error: 'Send a JSON object to start Morphly.', code: 'INVALID_SESSION_REQUEST' });
   }
 
   if (!admin) {
-    return res.status(503).json({
+    return logged(503, {
       error: supabaseAdminConfigError,
       code: 'SERVER_CONFIGURATION_ERROR',
     });
@@ -155,21 +171,21 @@ export default async function handler(req, res, options = {}) {
 
   const morphlyApiKey = normalizeMorphlyApiKey(options.morphlyApiKey || process.env.MORPHLY_API_KEY);
   if (!morphlyApiKey) {
-    return res.status(500).json({
-      error: 'Morphly is not configured on the server.',
+    return logged(500, {
+      error: 'Live video is not configured on the server.',
       code: 'MORPHLY_API_KEY_MISSING',
     });
   }
 
   const bearer = String(req.headers?.authorization || '').match(/^Bearer (\S+)$/i)?.[1];
   if (!bearer) {
-    return res.status(401).json({ error: 'Sign in before starting Morphly.', code: 'APP_LOGIN_REQUIRED' });
+    return logged(401, { error: 'Sign in before starting.', code: 'APP_LOGIN_REQUIRED' });
   }
 
   try {
     const { data, error: authError } = await admin.auth.getUser(bearer);
     if (authError || !data?.user) {
-      return res.status(401).json({ error: 'Sign in again before starting Morphly.', code: 'APP_LOGIN_REQUIRED' });
+      return logged(401, { error: 'Sign in again before starting.', code: 'APP_LOGIN_REQUIRED' });
     }
     const authUser = data.user;
     const userId = getRequestedUserId(req) || authUser.id;
@@ -178,18 +194,35 @@ export default async function handler(req, res, options = {}) {
       const { data: linked, error } = await admin.auth.admin.getUserById(userId);
       if (error || !authUser.email_confirmed_at || !linked?.user?.email_confirmed_at ||
           !authUser.email || authUser.email.toLowerCase() !== linked.user.email?.toLowerCase()) {
-        return res.status(403).json({ error: 'This account does not match your login.', code: 'ACCOUNT_NOT_ALLOWED' });
+        return logged(403, { error: 'This account does not match your login.', code: 'ACCOUNT_NOT_ALLOWED' });
       }
     }
     const duration = getRequestedDuration(req.body?.maxSessionSeconds);
-    const model = req.body?.model ?? MORPHLY_REALTIME_MODEL;
-    if (duration === null || !['lucy-2.5', MORPHLY_REALTIME_MODEL].includes(model)) {
-      return res.status(400).json({ error: 'Use a supported Morphly model and an integer duration from 1 to 300 seconds.', code: 'INVALID_SESSION_REQUEST' });
+    const model = resolveRealtimeModel(req.body?.model);
+    if (duration === null || !model) {
+      return logged(400, { error: 'Use Model M1 or Model M2 and an integer duration from 1 to 300 seconds.', code: 'INVALID_SESSION_REQUEST' });
+    }
+    const upstreamBody = {
+      model,
+      max_session_seconds: duration,
+      origin,
+    };
+    if (model === SUBJECT_MODEL) {
+      const imageUrl = typeof req.body?.image_url === 'string' ? req.body.image_url.trim() : '';
+      const editingType = req.body?.editing_type ?? 'subject_replacement';
+      if (!imageUrl || imageUrl.length > 12_000_000) {
+        return logged(400, { error: 'Model M2 needs a reference image.', code: 'REFERENCE_IMAGE_REQUIRED' });
+      }
+      if (editingType !== 'subject_replacement') {
+        return logged(400, { error: 'Model M2 only supports subject replacement.', code: 'INVALID_EDITING_TYPE' });
+      }
+      upstreamBody.image_url = imageUrl;
+      upstreamBody.editing_type = 'subject_replacement';
     }
     const wallet = await (options.getWallet || getWalletByUserId)(userId, { createIfMissing: true });
     const access = await (options.getAccess || getActiveAccess)(admin, userId);
     if ((!wallet || wallet.credits <= 0) && !access) {
-      return res.status(402).json({
+      return logged(402, {
         error: 'Your plan has expired. Choose a plan to keep streaming.',
         code: 'PLAN_EXPIRED',
       });
@@ -205,33 +238,27 @@ export default async function handler(req, res, options = {}) {
       .maybeSingle();
 
     if (activeSessionError) {
-      return res.status(500).json({
+      return logged(500, {
         error: 'Could not verify the active session',
         code: 'ACTIVE_SESSION_LOOKUP_FAILED',
       });
     }
 
     if (!activeSession) {
-      return res.status(409).json({
-        error: 'Start an app session before requesting a Morphly credential.',
+      return logged(409, {
+        error: 'Start an app session before requesting a live credential.',
         code: 'APP_SESSION_REQUIRED',
       });
     }
 
     const { data: rateAllowed, error: rateError } = await admin.rpc('claim_morphly_session_attempt', { p_user_id: userId });
     if (rateError) {
-      return res.status(503).json({ error: 'Morphly session rate limiting is not configured.', code: 'RATE_LIMIT_UNAVAILABLE' });
+      return logged(503, { error: 'Live session rate limiting is not configured.', code: 'RATE_LIMIT_UNAVAILABLE' });
     }
     if (rateAllowed !== true) {
       res.setHeader('Retry-After', '60');
-      return res.status(429).json({ error: 'Wait a minute before starting Morphly again.', code: 'RATE_LIMITED' });
+      return logged(429, { error: 'Wait a minute before starting again.', code: 'RATE_LIMITED' });
     }
-    const upstreamBody = {
-      model,
-      max_session_seconds: duration,
-      origin,
-    };
-
     const { response: upstream, result, attempts } = await createMorphlySession({
       morphlyApiKey,
       body: upstreamBody,
@@ -241,8 +268,8 @@ export default async function handler(req, res, options = {}) {
     });
 
     if (!upstream) {
-      return res.status(503).json({
-        error: 'Morphly realtime service is temporarily unavailable. Please try again shortly.',
+      return logged(503, {
+        error: 'Live video is temporarily unavailable. Please try again shortly.',
         code: 'MORPHLY_UPSTREAM_UNAVAILABLE',
       });
     }
@@ -257,11 +284,12 @@ export default async function handler(req, res, options = {}) {
       // Morphly rejects a bad server key with HTTP 401 and no code. Forwarding
       // that unchanged makes the desktop app tell a signed-in user to sign in again.
       if (isUncodedMorphlyKeyRejection(upstream.status, result)) {
-        return res.status(401).json({
-          error: 'The Morphly API key on the server was rejected.',
+        return logged(401, {
+          error: 'The live video key on the server was rejected.',
           code: 'MORPHLY_API_KEY_REJECTED',
         });
       }
+      console.info('[morphly-token]', { status: upstream.status, code: code || 'UPSTREAM_REJECTED' });
       return res.status(upstream.status).json(result);
     }
 
@@ -285,16 +313,17 @@ export default async function handler(req, res, options = {}) {
 
     if (activationError) {
       console.error('Could not activate billable realtime session.');
-      return res.status(500).json({
+      return logged(500, {
         error: 'Could not prepare the realtime session.',
         code: 'SESSION_ACTIVATION_FAILED',
       });
     }
 
+    console.info('[morphly-token]', { status: upstream.status, code: 'issued' });
     return res.status(upstream.status).json(result);
   } catch {
-    return res.status(502).json({
-      error: 'Could not reach Morphly.',
+    return logged(502, {
+      error: 'Could not reach the live video service.',
       code: 'MORPHLY_UNAVAILABLE',
     });
   }

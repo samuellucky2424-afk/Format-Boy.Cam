@@ -10,12 +10,12 @@ import { VirtualCameraService } from '@/services/VirtualCameraService';
 import { isFiniteNumber } from '@/lib/utils';
 import { supabase } from '@/lib/supabase';
 import { morphlySession, morphlyDiagnostic, morphlyErrorMessage } from '@/lib/morphly-session';
+import { LIVE_MODELS, loadLiveModel, saveLiveModel, type LiveModelId } from '@/lib/live-models';
 
 const PREVIEW_WINDOW_NAME = 'format-boy-preview';
 const PREVIEW_WINDOW_FEATURES = 'popup=yes,width=1280,height=720,minWidth=640,minHeight=360,resizable=yes,scrollbars=no';
 const MORPHLY_SDK_URL = 'https://morphly.fun/sdk/morphly.js';
-const MORPHLY_REALTIME_MODEL = 'morphly-realtime';
-// Capture preferences; Morphly determines the actual output profile.
+// Capture preferences; the selected model determines the actual output profile.
 const MORPHLY_REALTIME_WIDTH = 1280;
 const MORPHLY_REALTIME_HEIGHT = 720;
 const MORPHLY_REALTIME_FPS = 30;
@@ -72,7 +72,7 @@ function emitElectronLog(level: 'log' | 'info' | 'warn' | 'error', message: stri
 
 function Dashboard() {
   const { user } = useAuth();
-  const { credits, setCredits, setSessionStatus } = useApp();
+  const { credits, access, setCredits, setSessionStatus } = useApp();
   const navigate = useNavigate();
   const phase = useSyncExternalStore(morphlySession.subscribe, morphlySession.getSnapshot);
   const isStreaming = phase === 'live';
@@ -86,6 +86,7 @@ function Dashboard() {
   const [cameraDevices, setCameraDevices] = useState<MediaDeviceInfo[]>([]);
   const [selectedCameraId, setSelectedCameraId] = useState<string>('');
   const [cameraDiscoveryMessage, setCameraDiscoveryMessage] = useState('Finding cameras...');
+  const [liveModel, setLiveModel] = useState<LiveModelId>(() => loadLiveModel());
   const [prompt, setPrompt] = useState('A person looking professional');
   const [promptDraft, setPromptDraft] = useState(prompt);
   const [isPromptModalOpen, setIsPromptModalOpen] = useState(false);
@@ -203,7 +204,7 @@ function Dashboard() {
       mountedRef.current = false;
       if (pollIntervalRef.current) clearInterval(pollIntervalRef.current);
       void morphlySession.stop().catch(() => {
-        toast.error('Morphly stop is pending. Return to the camera to Retry Stop.', {
+        toast.error('Stop is pending. Return to the camera to Retry Stop.', {
           id: 'morphly-stop-pending',
           duration: Infinity,
           action: { label: 'Retry Stop', onClick: () => { void morphlySession.stop().catch(() => {}); } },
@@ -434,9 +435,10 @@ function Dashboard() {
     if (morphlySession.cancelled) return;
     const session = await client.realtime.connect(stream, {
       output: video,
-      model: MORPHLY_REALTIME_MODEL,
-      prompt,
+      model: LIVE_MODELS[liveModel].apiModel,
+      prompt: liveModel === 'm2' ? undefined : prompt,
       image: initialImage,
+      editingType: liveModel === 'm2' ? 'subject_replacement' : undefined,
       audio: false,
       enhancePrompt: true,
       resolution: MORPHLY_OUTPUT_RESOLUTION,
@@ -460,11 +462,11 @@ function Dashboard() {
     });
     session.on('lowCredit', () => {
       if (attempt !== morphlySession.attempt) return;
-      if (mountedRef.current) toast.warning('Morphly credits are running low.');
+      if (mountedRef.current) toast.warning('Live session credits are running low.');
     });
     session.on('creditsExhausted', () => {
       if (attempt !== morphlySession.attempt) return;
-      if (mountedRef.current) toast.error('Morphly credits exhausted. Stopping the session.');
+      if (mountedRef.current) toast.error('Live session credits are exhausted. Stopping the session.');
       void handleStop(false);
     });
     if (morphlySession.cancelled) return;
@@ -516,7 +518,11 @@ function Dashboard() {
 
   const handleStart = async () => {
     if (!user?.id) {
-      toast.error('Please sign in before starting a Morphly session.');
+      toast.error('Please sign in before starting a session.');
+      return;
+    }
+    if (liveModel === 'm2' && !uploadedImage) {
+      toast.error('Model M2 needs an uploaded reference image before you start.');
       return;
     }
     if (!morphlySession.begin()) return; // Synchronous guard against double clicks.
@@ -528,7 +534,11 @@ function Dashboard() {
         method: 'POST',
         body: JSON.stringify({ userId: user.id }),
       });
-      if (!sessionResponse.allowed) throw new Error(sessionResponse.error || 'Unable to start app session.');
+      if (!sessionResponse.allowed) {
+        throw Object.assign(new Error(sessionResponse.error || 'Unable to start the session.'), {
+          code: 'APP_SESSION_REJECTED',
+        });
+      }
       morphlySession.onCleanup(async () => {
         const response = await apiRequest<{ remainingCredits?: number }>('/end-session', {
           method: 'POST', body: JSON.stringify({ userId: user.id }),
@@ -543,7 +553,7 @@ function Dashboard() {
       if (pollIntervalRef.current) clearInterval(pollIntervalRef.current);
       // This is the existing app wallet policy, separate from SDK-owned Morphly billing.
       pollIntervalRef.current = setInterval(() => { void pollSessionStatus(); }, POLLING_INTERVAL);
-      toast.success('Connected to Morphly');
+      toast.success(`Connected with ${LIVE_MODELS[liveModel].label}`);
     } catch (error) {
       const message = morphlyErrorMessage(error);
       emitElectronLog('error', '[Morphly] Start failed', morphlyDiagnostic(error));
@@ -568,7 +578,7 @@ function Dashboard() {
       toast.dismiss('morphly-stop-pending');
       if (outputVideoRef.current) outputVideoRef.current.srcObject = null;
       if (mountedRef.current && showToast) {
-        toast.info('Morphly stopped; settlement may still be pending.');
+        toast.info('Session stopped; settlement may still be pending.');
       }
     } catch (error) {
       if (mountedRef.current) {
@@ -641,10 +651,10 @@ function Dashboard() {
 
       setPrompt(nextPrompt);
       setIsPromptModalOpen(false);
-      toast.success('Prompt sent to Morphly.');
+      toast.success('Prompt sent.');
     } catch (error) {
       emitElectronLog('error', '[Morphly] Prompt update failed', morphlyDiagnostic(error));
-      toast.error('Could not send the prompt to Morphly.');
+      toast.error('Could not send the prompt.');
     } finally {
       setIsSendingPrompt(false);
     }
@@ -771,6 +781,25 @@ function Dashboard() {
               </select>
             </div>
 
+            <label className="ml-1 flex h-[34px] shrink-0 items-center rounded-sm border border-[#2A2A2A] bg-[#1E1E1E] px-2 text-[#A3A3A3]">
+              <span className="sr-only">Model</span>
+              <select
+                aria-label="Model"
+                value={liveModel}
+                disabled={phase !== 'idle'}
+                title={phase === 'idle' ? 'Choose Model M1 or Model M2' : 'Stop the session to change model'}
+                onChange={(event) => {
+                  const next: LiveModelId = event.target.value === 'm2' ? 'm2' : 'm1';
+                  setLiveModel(next);
+                  saveLiveModel(next);
+                }}
+                className="h-full cursor-pointer bg-transparent text-[12px] text-[#A3A3A3] focus:outline-none disabled:cursor-not-allowed disabled:text-[#666666]"
+              >
+                <option value="m1">{LIVE_MODELS.m1.label}</option>
+                <option value="m2">{LIVE_MODELS.m2.label}</option>
+              </select>
+            </label>
+
             <button 
               onClick={handleObsPreviewToggle}
               title={isObsMode ? 'Close OBS preview' : 'Open OBS preview'}
@@ -799,8 +828,8 @@ function Dashboard() {
 
              <button
                onClick={openPromptModal}
-               disabled={!isStreaming}
-               title={isStreaming ? 'Write and send a Morphly prompt' : 'Start a session to send a prompt'}
+               disabled={!isStreaming || liveModel === 'm2'}
+               title={liveModel === 'm2' ? 'Model M2 uses the uploaded image' : isStreaming ? 'Write and send a prompt' : 'Start a session to send a prompt'}
                className="ml-1 h-[34px] min-w-[122px] shrink-0 px-4 flex items-center justify-center gap-2 rounded-sm border bg-[#1E1E1E] border-[#2A2A2A] text-[#A3A3A3] hover:border-[#3A3A3A] hover:text-white transition-all disabled:cursor-not-allowed disabled:opacity-40 disabled:hover:border-[#2A2A2A] disabled:hover:text-[#A3A3A3]"
              >
                <MessageSquare className="w-3.5 h-3.5 opacity-80" />
@@ -841,10 +870,10 @@ function Dashboard() {
             
             <div className="flex items-center h-full gap-3 px-3 border-l border-[#222222] min-[1200px]:px-5">
                <div className="flex flex-col justify-center gap-[2px]">
-                  <span className="text-[8px] text-[#A1A1AA] font-bold tracking-widest uppercase">App credits</span>
+                  <span className="text-[8px] text-[#A1A1AA] font-bold tracking-widest uppercase">{access.active ? access.label : 'No active plan'}</span>
                   <div className="flex items-center gap-1.5">
                     <Coins className="w-3.5 h-3.5 text-blue-400" />
-                    <span className="text-xs font-bold text-[#22C55E]">{Math.round(credits).toLocaleString()}</span>
+                    <span className="text-xs font-bold text-[#22C55E]">{access.active ? access.planName || access.label : `${Math.round(credits).toLocaleString()} credits left`}</span>
                   </div>
                </div>
                <button 
@@ -894,7 +923,7 @@ function Dashboard() {
                <p className="mt-1 text-sm text-[#8A8A8A]">
                  {uploadedImage
                    ? 'This prompt will be combined with your uploaded reference image.'
-                   : 'Describe how Morphly should transform your camera output.'}
+                   : 'Describe how the camera output should look.'}
                </p>
              </div>
 
@@ -904,7 +933,7 @@ function Dashboard() {
                onChange={(event) => setPromptDraft(event.target.value)}
                maxLength={1000}
                rows={5}
-               placeholder={isSendingPrompt ? "Sending to AI..." : 'Describe how Morphly should transform your camera output.'}
+               placeholder={isSendingPrompt ? "Sending to AI..." : 'Describe how the camera output should look.'}
                className="mt-4 w-full resize-none rounded-lg border border-[#303030] bg-[#0F0F0F] p-3 text-sm text-white outline-none placeholder:text-[#555555] focus:border-[#4A4A4A]"
              />
 

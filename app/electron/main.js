@@ -501,7 +501,7 @@ app.whenReady().then(async () => {
     try {
       desktopServer = await startDesktopServer(path.join(__dirname, '../dist'));
     } catch {
-      electronPkg.dialog.showErrorBox('Morphly desktop startup', 'Could not open localhost:5173. Close any other app using port 5173, then restart CALL ME.');
+      electronPkg.dialog.showErrorBox('CALL ME startup', 'Could not open localhost:5173. Close any other app using port 5173, then restart CALL ME.');
       app.quit();
       return;
     }
