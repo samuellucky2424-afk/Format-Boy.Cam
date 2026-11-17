@@ -106,46 +106,61 @@ function safeErrorDetail(error: unknown): string | undefined {
   const message = error instanceof Error ? error.message.trim() : '';
   if (!message || message === 'Error') return undefined;
   if (/bearer|token|secret|api[_ -]?key|authorization/i.test(message)) return undefined;
-  return message.slice(0, 180);
+  return message.replace(/morphly/gi, 'live video').slice(0, 180);
+}
+
+const PUBLIC_CODES: Record<string, string> = {
+  MORPHLY_ERROR: 'LIVE_ERROR',
+  MORPHLY_API_KEY_MISSING: 'LIVE_NOT_CONFIGURED',
+  MORPHLY_API_KEY_REJECTED: 'LIVE_KEY_REJECTED',
+  MORPHLY_UNAVAILABLE: 'LIVE_UNAVAILABLE',
+  MORPHLY_UPSTREAM_UNAVAILABLE: 'LIVE_UNAVAILABLE',
+};
+
+function shownCode(code: string) {
+  if (PUBLIC_CODES[code]) return PUBLIC_CODES[code];
+  if (code.startsWith('MORPHLY')) return 'LIVE_ERROR';
+  return code;
 }
 
 export function morphlyErrorMessage(error: unknown) {
   const { code, status } = morphlyDiagnostic(error);
   const messages: Record<string, string> = {
-    REALTIME_SETUP_REQUIRED: 'Morphly needs a server update. Contact Morphly support with REALTIME_SETUP_REQUIRED.',
-    SESSION_STOP_PENDING: 'Morphly stop is unconfirmed. Retry Stop; usage and refunds may remain pending.',
-    APP_SESSION_STOP_PENDING: 'Morphly stopped, but your app session could not close. Use Retry Stop to finish.',
-    SDK_LOAD_FAILED: 'Could not load the Morphly SDK. Check your network and browser content security policy.',
-    OUTPUT_TIMEOUT: 'Morphly has not delivered a video frame. Check camera input and WebRTC network access.',
-    APP_LOGIN_REQUIRED: 'Sign in again before starting Morphly.',
-    APP_ORIGIN_MISSING: 'Configure the Morphly application origins in server settings.',
-    MORPHLY_API_KEY_MISSING: 'Configure MORPHLY_API_KEY in the server settings.',
-    MORPHLY_API_KEY_REJECTED: 'The Morphly key on the server was rejected. The server administrator needs to create a new live key and update the server settings.',
-    RATE_LIMIT_UNAVAILABLE: 'Morphly rate limiting needs its server database migration.',
-    VIDEO_PLAYBACK_BLOCKED: 'Morphly playback was blocked. Allow muted video playback and try again.',
+    REALTIME_SETUP_REQUIRED: 'Live video needs a server update. Contact support with REALTIME_SETUP_REQUIRED.',
+    SESSION_STOP_PENDING: 'Stop is unconfirmed. Retry Stop; usage and refunds may remain pending.',
+    APP_SESSION_STOP_PENDING: 'The live session stopped, but the app session could not close. Use Retry Stop to finish.',
+    SDK_LOAD_FAILED: 'Could not load the live video player. Check your network and browser content security policy.',
+    OUTPUT_TIMEOUT: 'No video frame arrived. Check the camera and network, then try again.',
+    APP_LOGIN_REQUIRED: 'Sign in again before starting.',
+    APP_ORIGIN_MISSING: 'Configure the application origins in server settings.',
+    MORPHLY_API_KEY_MISSING: 'Live video is not configured on the server.',
+    MORPHLY_API_KEY_REJECTED: 'The live video key on the server was rejected. The server administrator needs to create a new key and update the server settings.',
+    RATE_LIMIT_UNAVAILABLE: 'Live session rate limiting needs its server database migration.',
+    VIDEO_PLAYBACK_BLOCKED: 'Playback was blocked. Allow muted video playback and try again.',
     VIDEO_PLAYBACK_FAILED: 'The output video could not play. Check the video element and try again.',
-    CAMERA_UNAVAILABLE: 'Morphly needs camera permission and HTTPS or localhost.',
-    BILLING_UNAVAILABLE: 'Morphly stopped because billing could not be verified. Stop confirmation may be pending.',
-    REALTIME_CONNECTION_FAILED: 'Morphly could not keep the live connection open. Try Start again.',
-    INVALID_TOKEN_RESPONSE: 'Morphly returned an incomplete session. Try Start again.',
-    MEDIA_STREAM_ENDED: 'The camera stopped before Morphly could connect.',
-    SESSION_DISCONNECTED: 'Morphly disconnected. Start a new session.',
+    CAMERA_UNAVAILABLE: 'The camera needs permission and HTTPS or localhost.',
+    BILLING_UNAVAILABLE: 'The session stopped because billing could not be verified. Stop confirmation may be pending.',
+    REALTIME_CONNECTION_FAILED: 'The live connection could not stay open. Try Start again.',
+    INVALID_TOKEN_RESPONSE: 'The live session response was incomplete. Try Start again.',
+    MEDIA_STREAM_ENDED: 'The camera stopped before the session could connect.',
+    SESSION_DISCONNECTED: 'The live session disconnected. Start a new session.',
     IMAGE_UNAVAILABLE: 'The reference image could not be loaded.',
     PLAN_EXPIRED: 'Your access plan has expired. Choose a plan to keep streaming.',
+    REFERENCE_IMAGE_REQUIRED: 'Model M2 needs an uploaded reference image.',
   };
   const statuses: Record<number, string> = {
-    400: 'Morphly rejected the model, origin, or session duration.',
-    401: 'The Morphly key on the server was rejected. The server administrator needs to create a new live key and update the server settings.',
-    402: 'Insufficient credits for Morphly. Check your app wallet and Morphly workspace balance.',
-    403: 'Morphly access was denied. Check account access, realtime:create scope, and allowed origins.',
-    409: 'The session request conflicts with an existing creation. Credentials cannot be replayed; do not retry automatically.',
-    429: 'Morphly rate limit reached. Wait before trying again.',
-    502: 'Morphly session creation failed. Check server diagnostics and Morphly availability.',
-    503: 'Morphly sessions are currently unavailable. Check the Morphly error code before retrying.',
+    400: 'The model, origin, or session duration was rejected.',
+    401: 'The live video key on the server was rejected. The server administrator needs to create a new key and update the server settings.',
+    402: 'Not enough credits to start. Check your access plan and credit balance.',
+    403: 'Live video access was denied. Check the account and allowed origins.',
+    409: 'This session request conflicts with one already started. Do not retry automatically.',
+    429: 'The start limit was reached. Wait before trying again.',
+    502: 'The live session could not be created. Try again shortly.',
+    503: 'Live sessions are currently unavailable.',
   };
   const known = messages[code] || (status ? statuses[status] : undefined);
-  const text = known || safeErrorDetail(error) || 'Morphly could not complete the request.';
-  return `${text} (${code}${status ? `, HTTP ${status}` : ''})`;
+  const text = known || safeErrorDetail(error) || 'The live session could not be completed.';
+  return `${text} (${shownCode(code)}${status ? `, HTTP ${status}` : ''})`;
 }
 
 export type MorphlyBalance = Partial<Record<'available_credits' | 'reserved_credits' | 'charged_credits' | 'billable_seconds', number>>;

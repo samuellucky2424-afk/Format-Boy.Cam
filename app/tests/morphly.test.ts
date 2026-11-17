@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import handler, { createMorphlySession, getRequestedDuration, normalizeMorphlyApiKey } from '../server/morphly-token.ts';
+import handler, { createMorphlySession, getRequestedDuration, normalizeMorphlyApiKey, resolveRealtimeModel } from '../server/morphly-token.ts';
 import { MorphlySessionOwner, morphlyDiagnostic, morphlyErrorMessage, readMorphlyBalance } from '../src/lib/morphly-session.ts';
 import type { MorphlySession } from '../src/lib/morphly-session.ts';
 
@@ -48,13 +48,30 @@ test('proxy forwards full metered response, legacy model, exact origin and statu
   assert.equal(f.res.headers['Cache-Control'], 'no-store');
   assert.equal(f.res.headers['Access-Control-Allow-Origin'], origin);
 });
-test('new requests default to Morphly model; canonical caller identity remains accepted', async () => {
+test('new requests default to Model M1; canonical caller identity remains accepted', async () => {
   const f = fixture();
   delete (f.req.body as { model?: string }).model;
   f.req.query.userId = 'canonical';
   await handler(f.req, f.res, f.options);
   assert.equal(f.res.statusCode, 201);
-  assert.equal(f.forwarded()?.model, 'morphly-realtime');
+  assert.equal(f.forwarded()?.model, 'M 2.1');
+});
+test('Model M2 forwards the documented subject-replacement fields', async () => {
+  const f = fixture();
+  f.req.body.model = 'M2.5';
+  f.req.body.image_url = 'https://example.com/reference.png';
+  f.req.body.editing_type = 'subject_replacement';
+  await handler(f.req, f.res, f.options);
+  assert.equal(f.res.statusCode, 201);
+  assert.deepEqual(f.forwarded(), {
+    model: 'M2.5',
+    max_session_seconds: 30,
+    origin,
+    image_url: 'https://example.com/reference.png',
+    editing_type: 'subject_replacement',
+  });
+  assert.equal(resolveRealtimeModel('M 2.1'), 'M 2.1');
+  assert.equal(resolveRealtimeModel('m2.5'), 'M2.5');
 });
 test('app billing activates only after a successful Morphly credential response', async () => {
   const f = fixture();
@@ -140,12 +157,16 @@ test('a rejected Morphly server key is reported as a key failure, not a sign-in 
   assert.equal(authorization, 'Bearer morph_live_example');
   assert.equal(f.res.statusCode, 401);
   assert.deepEqual(f.res.body, {
-    error: 'The Morphly API key on the server was rejected.',
+    error: 'The live video key on the server was rejected.',
     code: 'MORPHLY_API_KEY_REJECTED',
   });
-  assert.match(morphlyErrorMessage({ code: 'MORPHLY_API_KEY_REJECTED', status: 401 }), /server administrator/);
+  const keyMessage = morphlyErrorMessage({ code: 'MORPHLY_API_KEY_REJECTED', status: 401 });
+  assert.match(keyMessage, /server administrator/);
+  assert.match(keyMessage, /LIVE_KEY_REJECTED/);
+  assert.doesNotMatch(keyMessage, /Morphly/);
   assert.doesNotMatch(morphlyErrorMessage({ code: 'HTTP_401', status: 401 }), /Sign in again/);
-  assert.match(morphlyErrorMessage({ code: 'APP_LOGIN_REQUIRED', status: 401 }), /Sign in again before starting Morphly/);
+  assert.match(morphlyErrorMessage({ code: 'APP_LOGIN_REQUIRED', status: 401 }), /Sign in again before starting/);
+  assert.doesNotMatch(morphlyErrorMessage({ code: 'APP_LOGIN_REQUIRED', status: 401 }), /Morphly/);
 });
 test('all upstream error statuses and bodies are forwarded intact', async () => {
   for (const status of [401, 402, 403, 409, 429, 502, 503]) {
@@ -201,10 +222,12 @@ test('reported Morphly balance survives stop until the next session starts', asy
 test('diagnostics whitelist code/status, never use raw error messages or credentials', () => {
   const error = { code: 'REALTIME_SETUP_REQUIRED', status: 503, message: 'secret', session_token: 'secret' };
   assert.deepEqual(morphlyDiagnostic(error), { code: 'REALTIME_SETUP_REQUIRED', status: 503 });
-  assert.match(morphlyErrorMessage(error), /Contact Morphly support/);
+  assert.match(morphlyErrorMessage(error), /Contact support/);
+  assert.doesNotMatch(morphlyErrorMessage(error), /Morphly/);
   assert.doesNotMatch(morphlyErrorMessage(error), /secret/);
   assert.match(morphlyErrorMessage(new Error('The camera permission prompt was dismissed.')), /camera permission prompt/);
   assert.doesNotMatch(morphlyErrorMessage(new Error('Authorization Bearer secret-token')), /secret-token/);
   assert.match(morphlyErrorMessage({ code: 'REALTIME_CONNECTION_FAILED' }), /live connection/);
+  assert.doesNotMatch(morphlyErrorMessage(new Error('Morphly exploded')), /Morphly/);
   assert.deepEqual(readMorphlyBalance({ available_credits: 1, reserved_credits: 2, charged_credits: 3, billable_seconds: 4, session_token: 'secret' }), { available_credits: 1, reserved_credits: 2, charged_credits: 3, billable_seconds: 4 });
 });
