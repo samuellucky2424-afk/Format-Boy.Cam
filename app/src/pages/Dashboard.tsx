@@ -11,6 +11,7 @@ import { isFiniteNumber } from '@/lib/utils';
 import { supabase } from '@/lib/supabase';
 import { morphlySession, morphlyDiagnostic, morphlyErrorMessage } from '@/lib/morphly-session';
 import { LIVE_MODELS, loadLiveModel, saveLiveModel, type LiveModelId } from '@/lib/live-models';
+import { applyMorphlyInput } from '@/lib/morphly-input';
 
 const PREVIEW_WINDOW_NAME = 'format-boy-preview';
 const PREVIEW_WINDOW_FEATURES = 'popup=yes,width=1280,height=720,minWidth=640,minHeight=360,resizable=yes,scrollbars=no';
@@ -82,7 +83,8 @@ function Dashboard() {
   const mountedRef = useRef(true);
   const [isObsMode, setIsObsMode] = useState(false);
   const [isGhostMode, setIsGhostMode] = useState(false);
-  const [uploadedImage, setUploadedImage] = useState<string | null>(null);
+  const [uploadedImage, setUploadedImage] = useState<File | null>(null);
+  const uploadedImageRef = useRef<File | null>(null);
   const [cameraDevices, setCameraDevices] = useState<MediaDeviceInfo[]>([]);
   const [selectedCameraId, setSelectedCameraId] = useState<string>('');
   const [cameraDiscoveryMessage, setCameraDiscoveryMessage] = useState('Finding cameras...');
@@ -426,12 +428,7 @@ function Dashboard() {
         return { Authorization: `Bearer ${session.access_token}` };
       },
     });
-    let initialImage: Blob | undefined;
-    if (uploadedImage) {
-      const response = await fetch(uploadedImage);
-      if (!response.ok) throw Object.assign(new Error(), { code: 'IMAGE_UNAVAILABLE' });
-      initialImage = await response.blob();
-    }
+    const initialImage = uploadedImageRef.current ?? undefined;
     if (morphlySession.cancelled) return;
     const session = await client.realtime.connect(stream, {
       output: video,
@@ -456,6 +453,14 @@ function Dashboard() {
       },
     });
     morphlySession.attach(session);
+    // Explicitly apply the latest selection to the connected engine. The file
+    // may have changed while camera capture or SDK connection was pending.
+    let appliedImage: File | null = null;
+    while (!morphlySession.cancelled && uploadedImageRef.current && uploadedImageRef.current !== appliedImage) {
+      const image = uploadedImageRef.current;
+      await applyMorphlyInput(session, liveModel, prompt, image);
+      appliedImage = image;
+    }
     session.on('balance', (value: unknown) => {
       if (attempt !== morphlySession.attempt) return;
       morphlySession.updateBalance(value);
@@ -587,23 +592,13 @@ function Dashboard() {
     }
   }
 
-  const applyTransformation = async (imageUrl: string | null) => {
+  const applyTransformation = async (image: File) => {
     if (!morphlySession.session) return;
     
     try {
-      if (imageUrl) {
-        toast.info('Applying image transformation...');
-        const response = await fetch(imageUrl);
-        const blob = await response.blob();
-        await morphlySession.session.set({
-          prompt: prompt,
-          enhance: true,
-          image: blob
-        });
-        toast.success('Image applied to stream!');
-      } else {
-        await morphlySession.session.setPrompt(prompt, { enhance: true });
-      }
+      toast.info('Applying reference image...');
+      await applyMorphlyInput(morphlySession.session, liveModel, prompt, image);
+      toast.success('Reference image sent.');
     } catch (err) {
       emitElectronLog('error', '[Morphly] Image update failed', morphlyDiagnostic(err));
       toast.error('Failed to update stream with image');
@@ -613,17 +608,13 @@ function Dashboard() {
   const handleFileChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (file) {
-      const reader = new FileReader();
-      reader.onloadend = async () => {
-        const result = reader.result as string;
-        setUploadedImage(result);
-        if (isStreaming) {
-          await applyTransformation(result);
-        } else {
-          toast.success('Image selected. Click Start to begin streaming.');
-        }
-      };
-      reader.readAsDataURL(file);
+      uploadedImageRef.current = file;
+      setUploadedImage(file);
+      if (isStreaming) {
+        await applyTransformation(file);
+      } else {
+        toast.success(isLoading ? 'Image selected. It will be applied when connected.' : 'Image selected. Click Start to begin streaming.');
+      }
     }
   };
 
@@ -647,7 +638,7 @@ function Dashboard() {
 
     setIsSendingPrompt(true);
     try {
-      await morphlySession.session.setPrompt(nextPrompt, { enhance: true });
+      await applyMorphlyInput(morphlySession.session, liveModel, nextPrompt, uploadedImageRef.current);
 
       setPrompt(nextPrompt);
       setIsPromptModalOpen(false);
@@ -838,7 +829,7 @@ function Dashboard() {
 
              <button 
                onClick={() => fileInputRef.current?.click()}
-               title={uploadedImage ? 'Change image' : 'Upload image'}
+               title={uploadedImage ? `Change reference image: ${uploadedImage.name}` : 'Upload image'}
                className="h-[34px] shrink-0 px-3 flex items-center gap-2 rounded-sm border bg-[#1E1E1E] border-[#2A2A2A] text-[#737373] hover:text-[#A3A3A3] transition-all ml-1"
              >
                <Upload className="w-3.5 h-3.5 opacity-80" />

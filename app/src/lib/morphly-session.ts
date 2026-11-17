@@ -1,6 +1,6 @@
 export interface MorphlySession {
   disconnect: () => Promise<void>;
-  set: (config: { prompt?: string; enhance?: boolean; image?: string | Blob | File }) => Promise<void>;
+  set: (config: { prompt?: string; enhance?: boolean; image?: string | Blob | File; editingType?: 'subject_replacement' }) => Promise<void>;
   setPrompt: (text: string, options?: { enhance?: boolean }) => Promise<void>;
   on: (event: string, listener: (data: unknown) => void) => void;
   off: (event: string, listener: (data: unknown) => void) => void;
