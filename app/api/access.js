@@ -12,6 +12,23 @@ export function accessLabel(durationDays) {
   return `${durationDays} days access`;
 }
 
+export function describeAccess(row, now = Date.now()) {
+  if (!isAccessActive(row, now)) {
+    return { active: false, planName: null, endsAt: null, label: 'No active plan' };
+  }
+  if (row.plan_name === 'Unlimited' && (row.ends_at == null || row.ends_at === '')) {
+    return { active: true, planName: 'Unlimited', endsAt: null, label: 'Unlimited' };
+  }
+  const ends = Date.parse(row.ends_at);
+  const days = Math.max(1, Math.ceil((ends - now) / 86_400_000));
+  return {
+    active: true,
+    planName: row.plan_name,
+    endsAt: row.ends_at,
+    label: `${days} day${days === 1 ? '' : 's'} left`,
+  };
+}
+
 export async function getActiveAccess(admin, userId, now = Date.now()) {
   const { data, error } = await admin
     .from('subscriptions')

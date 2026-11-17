@@ -72,7 +72,7 @@ function emitElectronLog(level: 'log' | 'info' | 'warn' | 'error', message: stri
 
 function Dashboard() {
   const { user } = useAuth();
-  const { credits, setCredits, setSessionStatus } = useApp();
+  const { credits, access, setCredits, setSessionStatus } = useApp();
   const navigate = useNavigate();
   const phase = useSyncExternalStore(morphlySession.subscribe, morphlySession.getSnapshot);
   const isStreaming = phase === 'live';
@@ -528,7 +528,11 @@ function Dashboard() {
         method: 'POST',
         body: JSON.stringify({ userId: user.id }),
       });
-      if (!sessionResponse.allowed) throw new Error(sessionResponse.error || 'Unable to start app session.');
+      if (!sessionResponse.allowed) {
+        throw Object.assign(new Error(sessionResponse.error || 'Unable to start the session.'), {
+          code: 'APP_SESSION_REJECTED',
+        });
+      }
       morphlySession.onCleanup(async () => {
         const response = await apiRequest<{ remainingCredits?: number }>('/end-session', {
           method: 'POST', body: JSON.stringify({ userId: user.id }),
@@ -841,10 +845,10 @@ function Dashboard() {
             
             <div className="flex items-center h-full gap-3 px-3 border-l border-[#222222] min-[1200px]:px-5">
                <div className="flex flex-col justify-center gap-[2px]">
-                  <span className="text-[8px] text-[#A1A1AA] font-bold tracking-widest uppercase">App credits</span>
+                  <span className="text-[8px] text-[#A1A1AA] font-bold tracking-widest uppercase">{access.active ? access.label : 'No active plan'}</span>
                   <div className="flex items-center gap-1.5">
                     <Coins className="w-3.5 h-3.5 text-blue-400" />
-                    <span className="text-xs font-bold text-[#22C55E]">{Math.round(credits).toLocaleString()}</span>
+                    <span className="text-xs font-bold text-[#22C55E]">{access.active ? access.planName || access.label : `${Math.round(credits).toLocaleString()} credits left`}</span>
                   </div>
                </div>
                <button 

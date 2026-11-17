@@ -1,6 +1,7 @@
 // @ts-nocheck
 import { supabaseAdmin, supabaseAdminConfigError } from './supabase.js';
 import { getWalletByUserId } from './credit-utils.js';
+import { describeAccess, getActiveAccess } from './access.js';
 import cryptoSubmitHandler from '../server/crypto-submit.js';
 import paymentMethodsHandler from '../server/payment-methods.js';
 
@@ -53,9 +54,11 @@ export default async function handler(req, res) {
       timestamp: tx.created_at,
     }));
 
+    const access = describeAccess(await getActiveAccess(supabaseAdmin, userId));
     res.json({
       credits: creditAccount.credits,
       remainingSeconds: Math.floor(creditAccount.credits / 2),
+      access,
       transactions: mappedTxs
     });
   } catch (error) {

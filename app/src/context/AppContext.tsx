@@ -13,8 +13,16 @@ export interface Transaction {
   timestamp: string;
 }
 
+export interface AccessSummary {
+  active: boolean;
+  planName: string | null;
+  endsAt: string | null;
+  label: string;
+}
+
 interface AppContextType {
   credits: number;
+  access: AccessSummary;
   setCredits: (credits: number) => void;
   refreshCredits: () => Promise<void>;
   sessionStatus: 'LIVE' | 'IDLE';
@@ -43,6 +51,7 @@ const TRANSACTIONS_KEY = 'format_boy_transactions';
 export function AppProvider({ children }: { children: ReactNode }) {
   const { user } = useAuth();
   const [credits, setCreditsState] = useState(0);
+  const [access, setAccess] = useState<AccessSummary>({ active: false, planName: null, endsAt: null, label: 'No active plan' });
   const [sessionStatus, setSessionStatus] = useState<'LIVE' | 'IDLE'>('IDLE');
   const [isLoading, setLoading] = useState(false);
   const [transactions, setTransactions] = useState<Transaction[]>([]);
@@ -78,6 +87,15 @@ export function AppProvider({ children }: { children: ReactNode }) {
 
     const nextCredits = Math.max(0, (data as { credits: number }).credits);
     setCreditsState(nextCredits);
+    const reported = (data as { access?: Partial<AccessSummary> }).access;
+    if (reported && typeof reported.label === 'string' && typeof reported.active === 'boolean') {
+      setAccess({
+        active: reported.active,
+        planName: typeof reported.planName === 'string' ? reported.planName : null,
+        endsAt: typeof reported.endsAt === 'string' ? reported.endsAt : null,
+        label: reported.label,
+      });
+    }
 
     if (Array.isArray((data as { transactions?: unknown }).transactions)) {
       setTransactions((data as { transactions: Transaction[] }).transactions);
@@ -149,6 +167,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
 
   const value = useMemo(() => ({
     credits,
+    access,
     setCredits,
     refreshCredits,
     sessionStatus,
@@ -160,7 +179,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
     notifications,
     addNotification,
     clearNotifications,
-  }), [credits, setCredits, refreshCredits, sessionStatus, isLoading, transactions, addTransaction, notifications, addNotification, clearNotifications]);
+  }), [access, credits, setCredits, refreshCredits, sessionStatus, isLoading, transactions, addTransaction, notifications, addNotification, clearNotifications]);
 
   return (
     <AppContext.Provider value={value}>

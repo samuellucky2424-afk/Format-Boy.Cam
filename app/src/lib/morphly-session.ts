@@ -90,13 +90,23 @@ export class MorphlySessionOwner {
 
 export const morphlySession = new MorphlySessionOwner();
 
+const CODE_PATTERN = /^[A-Z0-9_]{1,64}$/;
+
 export function morphlyDiagnostic(error: unknown) {
-  const value = error as { code?: unknown; status?: unknown; cause?: { code?: unknown } } | null;
-  const rawCode = value?.code ?? value?.cause?.code;
+  const value = error as { code?: unknown; name?: unknown; status?: unknown; cause?: { code?: unknown; name?: unknown } } | null;
+  const candidates = [value?.code, value?.cause?.code, value?.name, value?.cause?.name];
+  const rawCode = candidates.find((candidate) => typeof candidate === 'string' && CODE_PATTERN.test(candidate));
   return {
-    code: typeof rawCode === 'string' && /^[A-Z0-9_]{1,64}$/.test(rawCode) ? rawCode : 'MORPHLY_ERROR',
+    code: typeof rawCode === 'string' ? rawCode : 'MORPHLY_ERROR',
     status: typeof value?.status === 'number' ? value.status : undefined,
   };
+}
+
+function safeErrorDetail(error: unknown): string | undefined {
+  const message = error instanceof Error ? error.message.trim() : '';
+  if (!message || message === 'Error') return undefined;
+  if (/bearer|token|secret|api[_ -]?key|authorization/i.test(message)) return undefined;
+  return message.slice(0, 180);
 }
 
 export function morphlyErrorMessage(error: unknown) {
@@ -113,8 +123,15 @@ export function morphlyErrorMessage(error: unknown) {
     MORPHLY_API_KEY_REJECTED: 'The Morphly key on the server was rejected. The server administrator needs to create a new live key and update the server settings.',
     RATE_LIMIT_UNAVAILABLE: 'Morphly rate limiting needs its server database migration.',
     VIDEO_PLAYBACK_BLOCKED: 'Morphly playback was blocked. Allow muted video playback and try again.',
+    VIDEO_PLAYBACK_FAILED: 'The output video could not play. Check the video element and try again.',
     CAMERA_UNAVAILABLE: 'Morphly needs camera permission and HTTPS or localhost.',
     BILLING_UNAVAILABLE: 'Morphly stopped because billing could not be verified. Stop confirmation may be pending.',
+    REALTIME_CONNECTION_FAILED: 'Morphly could not keep the live connection open. Try Start again.',
+    INVALID_TOKEN_RESPONSE: 'Morphly returned an incomplete session. Try Start again.',
+    MEDIA_STREAM_ENDED: 'The camera stopped before Morphly could connect.',
+    SESSION_DISCONNECTED: 'Morphly disconnected. Start a new session.',
+    IMAGE_UNAVAILABLE: 'The reference image could not be loaded.',
+    PLAN_EXPIRED: 'Your access plan has expired. Choose a plan to keep streaming.',
   };
   const statuses: Record<number, string> = {
     400: 'Morphly rejected the model, origin, or session duration.',
@@ -126,7 +143,9 @@ export function morphlyErrorMessage(error: unknown) {
     502: 'Morphly session creation failed. Check server diagnostics and Morphly availability.',
     503: 'Morphly sessions are currently unavailable. Check the Morphly error code before retrying.',
   };
-  return `${messages[code] || (status && statuses[status]) || 'Morphly could not complete the request.'} (${code}${status ? `, HTTP ${status}` : ''})`;
+  const known = messages[code] || (status ? statuses[status] : undefined);
+  const text = known || safeErrorDetail(error) || 'Morphly could not complete the request.';
+  return `${text} (${code}${status ? `, HTTP ${status}` : ''})`;
 }
 
 export type MorphlyBalance = Partial<Record<'available_credits' | 'reserved_credits' | 'charged_credits' | 'billable_seconds', number>>;

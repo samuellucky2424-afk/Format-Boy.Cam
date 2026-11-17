@@ -203,5 +203,8 @@ test('diagnostics whitelist code/status, never use raw error messages or credent
   assert.deepEqual(morphlyDiagnostic(error), { code: 'REALTIME_SETUP_REQUIRED', status: 503 });
   assert.match(morphlyErrorMessage(error), /Contact Morphly support/);
   assert.doesNotMatch(morphlyErrorMessage(error), /secret/);
+  assert.match(morphlyErrorMessage(new Error('The camera permission prompt was dismissed.')), /camera permission prompt/);
+  assert.doesNotMatch(morphlyErrorMessage(new Error('Authorization Bearer secret-token')), /secret-token/);
+  assert.match(morphlyErrorMessage({ code: 'REALTIME_CONNECTION_FAILED' }), /live connection/);
   assert.deepEqual(readMorphlyBalance({ available_credits: 1, reserved_credits: 2, charged_credits: 3, billable_seconds: 4, session_token: 'secret' }), { available_credits: 1, reserved_credits: 2, charged_credits: 3, billable_seconds: 4 });
 });
