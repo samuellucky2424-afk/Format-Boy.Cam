@@ -14,12 +14,12 @@ export default async function handler(req, res) {
   if (req.method === 'OPTIONS') return res.status(200).end();
   if (req.method !== 'POST') return res.status(405).json({ error: 'Method not allowed' });
 
-  const { userId, credits, email } = req.body;
+  const { userId, credits, email, packageId } = req.body;
 
-  if (!userId || !credits || !email) {
+  if (!userId || !email || (!packageId && !credits)) {
     return res.status(400).json({
       status: 'failed',
-      message: 'Missing required fields: userId, credits, email',
+      message: 'Missing required fields: userId, email, and packageId',
     });
   }
 
@@ -32,21 +32,28 @@ export default async function handler(req, res) {
     });
   }
 
-  const { data: plan, error: planError } = await supabaseAdmin
+  let planQuery = supabaseAdmin
     .from('credit_packages')
-    .select('price_ngn')
-    .eq('credits', requestedCredits)
-    .eq('is_active', true)
-    .maybeSingle();
+    .select('id, name, price_ngn, price_usd, plan_code, duration_days, credits')
+    .eq('is_active', true);
+
+  planQuery = packageId
+    ? planQuery.eq('id', packageId)
+    : planQuery.eq('credits', requestedCredits);
+
+  const { data: plan, error: planError } = await planQuery.maybeSingle();
 
   if (planError || !plan) {
     return res.status(400).json({
       status: 'failed',
-      message: 'Invalid credit package selected or package not found in backend',
+      message: 'Invalid plan selected or plan not found in backend',
     });
   }
 
+  const priceUsd = Number(plan.price_usd);
   const amountNGN = Number(plan.price_ngn);
+  const currency = priceUsd > 0 ? 'USD' : 'NGN';
+  const amountMajor = currency === 'USD' ? priceUsd : amountNGN;
 
   const paystackSecretKey = process.env.PAYSTACK_SECRET_KEY;
   if (!paystackSecretKey) {
@@ -57,7 +64,7 @@ export default async function handler(req, res) {
   }
 
   const reference = `FMT-${Date.now()}-${userId}`;
-  const amountKobo = toKobo(amountNGN);
+  const amountKobo = toKobo(amountMajor);
 
   if (!Number.isFinite(amountKobo) || amountKobo <= 0) {
     return res.status(500).json({
@@ -77,10 +84,12 @@ export default async function handler(req, res) {
         email,
         amount: amountKobo,
         reference,
-        currency: 'NGN',
+        currency,
         metadata: {
           user_id: userId,
-          credits: requestedCredits,
+          package_id: plan.id,
+          plan_code: plan.plan_code,
+          credits: plan.credits,
         },
       }),
     });
@@ -97,9 +106,13 @@ export default async function handler(req, res) {
     return res.status(200).json({
       status: 'success',
       reference,
-      amountNGN,
+      amountNGN: currency === 'NGN' ? amountMajor : 0,
+      amountUSD: currency === 'USD' ? amountMajor : 0,
+      currency,
       amountKobo,
-      credits: requestedCredits,
+      packageId: plan.id,
+      planCode: plan.plan_code,
+      credits: plan.credits,
       authorization_url: initData?.data?.authorization_url,
       access_code: initData?.data?.access_code,
     });

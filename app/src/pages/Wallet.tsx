@@ -8,22 +8,16 @@ import { useAuth } from '@/context/AuthContext';
 import { toast } from 'sonner';
 import { CryptoPaymentModal } from '@/components/CryptoPaymentModal';
 import { supabase } from '@/lib/supabase';
-
-interface CreditPlan {
-  id: string;
-  credits: number;
-  priceNGN: number;
-  priceUSD: number;
-}
+import { accessLabel, formatPlanPrice, type AccessPlanView } from '@/lib/access-plans';
 
 const CREDITS_PER_SECOND = 2;
 
 function Wallet() {
   const { credits, transactions } = useApp();
   const { user, logout } = useAuth();
-  const [plans, setPlans] = useState<CreditPlan[]>([]);
+  const [plans, setPlans] = useState<AccessPlanView[]>([]);
   const [loadingPlans, setLoadingPlans] = useState(true);
-  const [selectedPlan, setSelectedPlan] = useState<CreditPlan | null>(null);
+  const [selectedPlan, setSelectedPlan] = useState<AccessPlanView | null>(null);
   const [isPaymentModalOpen, setIsPaymentModalOpen] = useState(false);
   const [showFundModal, setShowFundModal] = useState(false);
 
@@ -32,23 +26,24 @@ function Wallet() {
       try {
         const { data, error } = await supabase
           .from('credit_packages')
-          .select('id, credits, price_ngn, price_usd')
+          .select('id, name, price_ngn, price_usd, duration_days, plan_code')
           .eq('is_active', true)
-          .order('sort_order', { ascending: true })
-          .order('credits', { ascending: true });
+          .order('sort_order', { ascending: true });
 
         if (error) throw error;
         if (data) {
-          setPlans(data.map(p => ({ 
+          setPlans(data.map(p => ({
             id: p.id,
-            credits: p.credits, 
+            name: p.name || 'Plan',
             priceNGN: Number(p.price_ngn),
-            priceUSD: Number(p.price_usd || 0)
+            priceUSD: Number(p.price_usd || 0),
+            durationDays: p.duration_days == null ? null : Number(p.duration_days),
+            planCode: p.plan_code,
           })));
         }
       } catch (err) {
         console.error('Failed to load plans:', err);
-        toast.error('Failed to load credit packages.');
+        toast.error('Failed to load plans.');
       } finally {
         setLoadingPlans(false);
       }
@@ -60,12 +55,12 @@ function Wallet() {
 
   const handleFundWallet = () => {
     if (!user) {
-      toast.error('Please log in to buy credits.');
+      toast.error('Please log in to choose a plan.');
       return;
     }
 
     if (!selectedPlan) {
-      toast.error('Please select a credit package.');
+      toast.error('Please select a plan.');
       return;
     }
 
@@ -106,7 +101,7 @@ function Wallet() {
             id="fund-wallet-btn"
           >
             <Plus className="w-4 h-4 mr-2" />
-            Buy Credits
+            Choose a plan
           </Button>
         </CardContent>
       </Card>
@@ -114,32 +109,30 @@ function Wallet() {
       {showFundModal && (
         <Card className="bg-gradient-to-br from-[#131316] to-[#0f0f10] border-[#1f1f23] overflow-hidden rounded-2xl shadow-2xl shadow-black/20 mb-6 animate-in slide-in-from-top-2 duration-200">
           <CardHeader className="pb-4 border-b border-[#1f1f23]">
-            <CardTitle className="text-sm font-medium text-[#71717a]">Buy Credits</CardTitle>
+            <CardTitle className="text-sm font-medium text-[#71717a]">Choose a plan</CardTitle>
           </CardHeader>
           <CardContent className="p-6">
-            <label className="block text-xs font-medium text-[#a1a1aa] mb-3">Select Package</label>
+            <label className="block text-xs font-medium text-[#a1a1aa] mb-3">Select a plan</label>
             {loadingPlans ? (
               <div className="text-center py-4 text-[#71717a]">Loading packages...</div>
             ) : (
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 mb-6">
                 {plans.map((plan) => (
                   <button
-                    key={plan.credits}
+                    key={plan.id}
                     onClick={() => setSelectedPlan(plan)}
                     className={`p-4 rounded-xl border text-left transition-all duration-150 ${
-                      selectedPlan?.credits === plan.credits
+                      selectedPlan?.id === plan.id
                         ? 'bg-blue-600/15 border-blue-500 ring-2 ring-blue-500/40 shadow-lg shadow-blue-500/10'
                         : 'bg-[#1a1a1f] border-[#27272a] text-white hover:border-[#3f3f46] hover:bg-[#222]'
                     }`}
                   >
                     <div className="flex flex-col">
-                      <span className={`text-lg font-bold ${selectedPlan?.credits === plan.credits ? 'text-blue-400' : 'text-white'}`}>
-                        {plan.credits.toLocaleString()} Credits
+                      <span className={`text-lg font-bold ${selectedPlan?.id === plan.id ? 'text-blue-400' : 'text-white'}`}>
+                        {plan.name}
                       </span>
-                      <span className="text-sm text-[#a1a1aa] mt-1">
-                        ${plan.priceUSD > 0 ? plan.priceUSD.toLocaleString() : plan.priceNGN.toLocaleString()} 
-                        {plan.priceUSD === 0 && ' NGN'}
-                      </span>
+                      <span className="text-sm text-[#a1a1aa] mt-1">{accessLabel(plan.durationDays, plan.planCode)}</span>
+                      <span className="text-sm text-white mt-2">{formatPlanPrice(plan)}</span>
                     </div>
                   </button>
                 ))}
@@ -153,7 +146,7 @@ function Wallet() {
               id="proceed-payment-btn"
             >
               <ExternalLink className="w-4 h-4 mr-2" />
-              Pay {selectedPlan ? (selectedPlan.priceUSD ? `$${selectedPlan.priceUSD.toLocaleString()}` : `NGN ${selectedPlan.priceNGN.toLocaleString()}`) : 'Now'}
+              Pay {selectedPlan ? formatPlanPrice(selectedPlan) : 'Now'}
             </Button>
 
             <p className="text-xs text-[#52525b] text-center mt-3">

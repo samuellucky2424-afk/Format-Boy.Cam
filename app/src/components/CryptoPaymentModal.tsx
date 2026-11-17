@@ -5,11 +5,19 @@ import { toast } from 'sonner';
 import { useAuth } from '@/context/AuthContext';
 import { supabase } from '@/lib/supabase';
 import { getApiUrl } from '@/lib/api-client';
+import { accessLabel, formatPlanPrice } from '@/lib/access-plans';
 
 interface CryptoPaymentModalProps {
   isOpen: boolean;
   onClose: () => void;
-  plan: { id?: string; credits: number; priceNGN: number; priceUSD?: number } | null;
+  plan: {
+    id?: string;
+    name?: string;
+    priceNGN: number;
+    priceUSD?: number;
+    durationDays?: number | null;
+    planCode?: string | null;
+  } | null;
 }
 
 interface PaymentMethod {
@@ -91,7 +99,7 @@ export function CryptoPaymentModal({ isOpen, onClose, plan }: CryptoPaymentModal
     setStep('processing');
 
     try {
-      if (!plan.id) throw new Error('Invalid credit package');
+      if (!plan.id) throw new Error('Invalid plan');
       if (!paymentMethod) throw new Error('Select a payment method');
 
       const {
@@ -169,12 +177,15 @@ export function CryptoPaymentModal({ isOpen, onClose, plan }: CryptoPaymentModal
         <div className="bg-[#1a1a1f] border border-[#27272a] rounded-xl p-4 mb-6">
           <div className="flex justify-between items-center mb-2">
             <span className="text-[#a1a1aa] text-sm">Package</span>
-            <span className="text-white font-semibold">{plan.credits.toLocaleString()} Credits</span>
+            <span className="text-white font-semibold text-right">
+              {plan.name || 'Plan'}
+              <span className="block text-xs font-normal text-[#a1a1aa]">{accessLabel(plan.durationDays, plan.planCode)}</span>
+            </span>
           </div>
           <div className="flex justify-between items-center">
             <span className="text-[#a1a1aa] text-sm">Amount to Send</span>
             <span className="text-xl font-bold text-emerald-400">
-              {plan.priceUSD ? `$${plan.priceUSD.toLocaleString()}` : `₦${plan.priceNGN.toLocaleString()}`}
+              {formatPlanPrice({ priceUSD: plan.priceUSD || 0, priceNGN: plan.priceNGN })}
             </span>
           </div>
         </div>
@@ -183,7 +194,7 @@ export function CryptoPaymentModal({ isOpen, onClose, plan }: CryptoPaymentModal
           <div className="flex flex-col items-center justify-center py-8 text-emerald-500 text-center">
             <CheckCircle2 className="w-16 h-16 mb-4 animate-in zoom-in" />
             <h3 className="text-xl font-bold text-white mb-2">Request Submitted</h3>
-            <p className="text-[#a1a1aa] text-sm">Your payment is being verified by an admin. Credits will be added shortly.</p>
+            <p className="text-[#a1a1aa] text-sm">Your payment is being verified by an admin. Access starts after it is confirmed.</p>
           </div>
         ) : (
           <>

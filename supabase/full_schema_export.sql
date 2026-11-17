@@ -85,6 +85,8 @@ CREATE TABLE IF NOT EXISTS public.credit_packages (
   price_usd NUMERIC DEFAULT 0,
   is_active BOOLEAN DEFAULT TRUE,
   sort_order INTEGER NOT NULL DEFAULT 0,
+  plan_code TEXT UNIQUE,
+  duration_days INTEGER,
   created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
 );
 
@@ -342,8 +344,7 @@ $$ LANGUAGE plpgsql SECURITY DEFINER;
 -- ============================================
 -- SEED DATA: Default Packages
 -- ============================================
-INSERT INTO public.credit_packages (name, credits, price_ngn, price_usd) VALUES
-  ('Starter', 500, 14000, 10.00),
-  ('Basic', 1000, 28000, 20.00),
-  ('Pro', 2000, 56000, 40.00),
-  ('Enterprise', 5000, 140000, 100.00);
+INSERT INTO public.credit_packages (name, credits, price_ngn, price_usd, is_active, sort_order, plan_code, duration_days) VALUES
+  ('2 Weeks', 0, 0, 100, true, 1, 'two_weeks', 14),
+  ('30 Days', 0, 0, 250, true, 2, 'thirty_days', 30),
+  ('Unlimited', 0, 0, 500, true, 3, 'unlimited', NULL);

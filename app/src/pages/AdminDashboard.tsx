@@ -48,9 +48,8 @@ export default function AdminDashboard() {
   const [isEditPackageOpen, setIsEditPackageOpen] = useState(false);
   const [selectedPackage, setSelectedPackage] = useState<any>(null);
   const [packageName, setPackageName] = useState('');
-  const [packageCredits, setPackageCredits] = useState('');
   const [packageUsd, setPackageUsd] = useState('');
-  const [packageNgn, setPackageNgn] = useState('');
+  const [packageDuration, setPackageDuration] = useState('');
 
   const [isPaymentMethodOpen, setIsPaymentMethodOpen] = useState(false);
   const [selectedPaymentMethod, setSelectedPaymentMethod] = useState<any>(null);
@@ -119,7 +118,7 @@ export default function AdminDashboard() {
       const optionalResults = await Promise.allSettled([
         withTimeout(supabase.from('transactions').select('*').order('created_at', { ascending: false }), 'Website transactions'),
         withTimeout(supabase.from('users').select('*').order('created_at', { ascending: false }), 'Users'),
-        withTimeout(supabase.from('credit_packages').select('*').order('sort_order', { ascending: true }).order('credits', { ascending: true }), 'Credit packages'),
+        withTimeout(supabase.from('credit_packages').select('*').order('sort_order', { ascending: true }), 'Access plans'),
         withTimeout(loadAdminPaymentMethods(), 'Payment methods'),
       ]);
 
@@ -193,7 +192,7 @@ export default function AdminDashboard() {
             p_status: 'completed'
           });
       if (error) throw error;
-      toast.success('Payment confirmed and credits added');
+      toast.success('Payment confirmed and access granted');
       fetchDashboardData();
     } catch (err: any) {
       toast.error(err.message || 'Error confirming payment');
@@ -240,30 +239,40 @@ export default function AdminDashboard() {
 
   const handleEditPackageSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    const credits = Number(packageCredits);
     const priceUsd = Number(packageUsd);
-    const priceNgn = Number(packageNgn);
+    const durationDays = packageDuration.trim() === '' ? null : Number(packageDuration);
 
-    if (!packageName.trim() || !Number.isInteger(credits) || credits <= 0 || priceUsd < 0 || priceNgn < 0) {
-      toast.error('Enter a name, a positive whole credit amount, and valid prices.');
+    if (!selectedPackage) {
+      toast.error('Only the three existing plans can be edited.');
+      return;
+    }
+    if (!packageName.trim() || !Number.isFinite(priceUsd) || priceUsd <= 0) {
+      toast.error('Enter a name and a price in dollars.');
+      return;
+    }
+    if (selectedPackage.plan_code === 'unlimited' && durationDays !== null) {
+      toast.error('The unlimited plan does not expire. Leave the access length blank.');
+      return;
+    }
+    if (selectedPackage.plan_code !== 'unlimited' && (durationDays === null || !Number.isInteger(durationDays) || durationDays <= 0)) {
+      toast.error('Enter the number of days this plan stays active.');
       return;
     }
 
     try {
       const packageValues = {
         name: packageName.trim(),
-        credits,
+        credits: 0,
         price_usd: priceUsd,
-        price_ngn: priceNgn,
+        price_ngn: 0,
+        duration_days: selectedPackage.plan_code === 'unlimited' ? null : durationDays,
         is_active: true,
       };
 
-      const { error } = selectedPackage
-        ? await supabase.from('credit_packages').update(packageValues).eq('id', selectedPackage.id)
-        : await supabase.from('credit_packages').insert(packageValues);
+      const { error } = await supabase.from('credit_packages').update(packageValues).eq('id', selectedPackage.id);
       
       if (error) throw error;
-      toast.success(selectedPackage ? 'Package updated successfully' : 'Package created successfully');
+      toast.success('Plan updated');
       setIsEditPackageOpen(false);
       setSelectedPackage(null);
       fetchDashboardData();
@@ -526,42 +535,27 @@ export default function AdminDashboard() {
           <Card className="bg-[#18181b] border-[#27272a]">
             <CardHeader className="flex flex-row items-center justify-between gap-4">
               <div>
-                <CardTitle className="text-white">Credit Packages</CardTitle>
-                <CardDescription className="text-[#a1a1aa]">Configure credits and pricing for top-up packages.</CardDescription>
+                <CardTitle className="text-white">Access plans</CardTitle>
+                <CardDescription className="text-[#a1a1aa]">$100 for 14 days, $250 for 30 days, and $500 with no expiry.</CardDescription>
               </div>
-              <Button
-                className="bg-blue-600 hover:bg-blue-700 text-white"
-                onClick={() => {
-                  setSelectedPackage(null);
-                  setPackageName('');
-                  setPackageCredits('');
-                  setPackageUsd('');
-                  setPackageNgn('');
-                  setIsEditPackageOpen(true);
-                }}
-              >
-                <Plus className="w-4 h-4 mr-2" /> Add Package
-              </Button>
             </CardHeader>
             <CardContent>
               <div className="rounded-md border border-[#27272a] overflow-hidden">
                 <Table>
                   <TableHeader className="bg-[#1a1a1c]">
                     <TableRow className="border-[#27272a] hover:bg-transparent">
-                      <TableHead className="text-[#a1a1aa]">Package Name</TableHead>
-                      <TableHead className="text-[#a1a1aa]">Credits</TableHead>
+                      <TableHead className="text-[#a1a1aa]">Plan</TableHead>
+                      <TableHead className="text-[#a1a1aa]">Access</TableHead>
                       <TableHead className="text-[#a1a1aa]">Price (USD)</TableHead>
-                      <TableHead className="text-[#a1a1aa]">Price (NGN)</TableHead>
                       <TableHead className="text-right text-[#a1a1aa]">Actions</TableHead>
                     </TableRow>
                   </TableHeader>
                   <TableBody>
-                    {packages.map(pkg => (
+                    {packages.filter((pkg) => pkg.is_active !== false).map(pkg => (
                       <TableRow key={pkg.id} className="border-[#27272a] hover:bg-[#27272a]/50">
                         <TableCell className="font-medium text-white">{pkg.name}</TableCell>
-                        <TableCell className="text-[#e4e4e7]">{pkg.credits}</TableCell>
+                        <TableCell className="text-[#e4e4e7]">{pkg.plan_code === 'unlimited' || pkg.duration_days == null ? 'No expiry' : `${pkg.duration_days} days`}</TableCell>
                         <TableCell className="text-[#a1a1aa]">${pkg.price_usd || 0}</TableCell>
-                        <TableCell className="text-[#a1a1aa]">₦{pkg.price_ngn || 0}</TableCell>
                         <TableCell className="text-right">
                           <Button 
                             variant="outline" 
@@ -570,9 +564,8 @@ export default function AdminDashboard() {
                             onClick={() => {
                               setSelectedPackage(pkg);
                               setPackageName(pkg.name || '');
-                              setPackageCredits(pkg.credits?.toString() || '');
                               setPackageUsd(pkg.price_usd?.toString() || '0');
-                              setPackageNgn(pkg.price_ngn?.toString() || '0');
+                              setPackageDuration(pkg.duration_days == null ? '' : String(pkg.duration_days));
                               setIsEditPackageOpen(true);
                             }}
                           >
@@ -671,9 +664,9 @@ export default function AdminDashboard() {
       <Dialog open={isEditPackageOpen} onOpenChange={setIsEditPackageOpen}>
         <DialogContent className="bg-[#18181b] border-[#27272a] text-white sm:max-w-md">
           <DialogHeader>
-            <DialogTitle>{selectedPackage ? 'Edit Credit Package' : 'Add Credit Package'}</DialogTitle>
+            <DialogTitle>Edit access plan</DialogTitle>
             <DialogDescription className="text-[#a1a1aa]">
-              {selectedPackage ? 'Update the package credit amount and prices.' : 'Create a new package users can purchase.'}
+              Leave access length blank for the $500 plan, which does not expire.
             </DialogDescription>
           </DialogHeader>
           <form onSubmit={handleEditPackageSubmit}>
@@ -685,18 +678,18 @@ export default function AdminDashboard() {
                   value={packageName}
                   onChange={(e) => setPackageName(e.target.value)}
                   className="bg-[#27272a] border-[#3f3f46] text-white"
-                  placeholder="e.g. Starter"
+                  placeholder="2 Weeks"
                 />
               </div>
               <div className="grid gap-2">
-                <label className="text-sm font-medium text-[#e4e4e7]">Credit Amount</label>
+                <label className="text-sm font-medium text-[#e4e4e7]">Access length in days</label>
                 <Input
                   type="number"
                   min="1"
                   step="1"
-                  required
-                  value={packageCredits}
-                  onChange={(e) => setPackageCredits(e.target.value)}
+                  value={packageDuration}
+                  onChange={(e) => setPackageDuration(e.target.value)}
+                  placeholder="Blank means no expiry"
                   className="bg-[#27272a] border-[#3f3f46] text-white"
                 />
               </div>
@@ -712,24 +705,13 @@ export default function AdminDashboard() {
                   className="bg-[#27272a] border-[#3f3f46] text-white"
                 />
               </div>
-              <div className="grid gap-2">
-                <label className="text-sm font-medium text-[#e4e4e7]">Price in NGN (₦)</label>
-                <Input 
-                  type="number"
-                  min="0"
-                  required
-                  value={packageNgn}
-                  onChange={(e) => setPackageNgn(e.target.value)}
-                  className="bg-[#27272a] border-[#3f3f46] text-white"
-                />
-              </div>
             </div>
             <DialogFooter>
               <Button type="button" variant="outline" onClick={() => setIsEditPackageOpen(false)} className="border-[#3f3f46] bg-transparent text-white hover:bg-[#27272a]">
                 Cancel
               </Button>
               <Button type="submit" className="bg-blue-600 hover:bg-blue-700 text-white">
-                {selectedPackage ? 'Save Changes' : 'Create Package'}
+                Save plan
               </Button>
             </DialogFooter>
           </form>

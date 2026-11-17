@@ -325,9 +325,9 @@ $$ LANGUAGE plpgsql SECURITY DEFINER;
 -- SEED DATA: Default Plans
 -- ============================================
 INSERT INTO public.plans (name, description, price, credits, duration_minutes, features, sort_order) VALUES
-  ('Free', 'Get started with basic features', 0, 100, 1440, '["100 credits/day", "Basic models", "Community support"]', 1),
-  ('Pro', 'Best for individual creators', 9.99, 1000, 43200, '["1000 credits/month", "All models", "Priority support", "No watermarks"]', 2),
-  ('Enterprise', 'For teams and businesses', 49.99, 5000, 43200, '["5000 credits/month", "All models", "24/7 support", "API access", "Custom branding"]', 3)
+  ('2 Weeks', '14 days of CALL ME access', 100, 0, 20160, '["14 days access"]', 1),
+  ('30 Days', '30 days of CALL ME access', 250, 0, 43200, '["30 days access"]', 2),
+  ('Unlimited', 'CALL ME access with no expiry', 500, 0, 0, '["No expiry"]', 3)
 ON CONFLICT (name) DO NOTHING;
 
 -- ============================================

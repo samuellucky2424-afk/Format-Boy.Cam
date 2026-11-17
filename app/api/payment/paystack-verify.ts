@@ -65,10 +65,11 @@ export default async function handler(req, res) {
       });
     }
 
-    if (verifyData.data?.currency !== 'NGN') {
+    const paidCurrency = verifyData.data?.currency;
+    if (paidCurrency !== 'NGN' && paidCurrency !== 'USD') {
       return res.status(400).json({
         status: 'failed',
-        message: `Invalid currency: expected NGN, got ${verifyData.data?.currency}`,
+        message: `Invalid currency: expected USD or NGN, got ${paidCurrency}`,
       });
     }
 
@@ -114,7 +115,7 @@ export default async function handler(req, res) {
 
     const { data: plans, error: plansError } = await supabaseAdmin
       .from('credit_packages')
-      .select('price_ngn, credits')
+      .select('id, name, price_ngn, price_usd, credits, plan_code, duration_days')
       .eq('is_active', true);
 
     if (plansError || !plans) {
@@ -124,31 +125,52 @@ export default async function handler(req, res) {
       });
     }
 
-    let creditsToAdd = 0;
-    const paidNgn = amountKobo / 100;
-    const matchedPlan = plans.find(p => Math.round(Number(p.price_ngn)) === Math.round(paidNgn));
+    const paidMajor = amountKobo / 100;
+    const matchedPlan = plans.find((plan) => {
+      const expected = paidCurrency === 'USD' ? Number(plan.price_usd) : Number(plan.price_ngn);
+      return Math.round(expected * 100) === amountKobo;
+    });
 
-    if (matchedPlan) {
-      creditsToAdd = matchedPlan.credits;
-    }
-
-    if (creditsToAdd === 0) {
+    if (!matchedPlan) {
       return res.status(400).json({
         status: 'failed',
-        message: `Amount ₦${paidNgn.toLocaleString()} does not match any valid credit tier.`,
+        message: `Amount ${paidMajor.toLocaleString()} ${paidCurrency} does not match an active plan.`,
       });
     }
 
+    const creditsToAdd = Number(matchedPlan.credits) || 0;
     const creditAccount = await requireWalletByUserId(userId, { createIfMissing: true });
-    const newCredits = creditAccount.credits + creditsToAdd;
-    const updatedWallet = await updateWalletCredits(userId, newCredits);
-    logCreditUpdate({
-      userId,
-      before: creditAccount.credits,
-      after: updatedWallet.credits,
-      change: creditsToAdd,
-      source: 'payment-verify',
-    });
+
+    if (matchedPlan.plan_code) {
+      const { error: accessError } = await supabaseAdmin.rpc('grant_plan_access', {
+        p_user_id: userId,
+        p_package_id: matchedPlan.id,
+        p_amount: paidMajor,
+        p_currency: paidCurrency,
+      });
+      if (accessError) {
+        console.error('Plan access grant failed:', accessError);
+        return res.status(500).json({
+          status: 'failed',
+          message: 'Payment was received, but access could not be granted. Apply the access-plan database migration and confirm again.',
+        });
+      }
+    } else if (creditsToAdd > 0) {
+      const newCredits = creditAccount.credits + creditsToAdd;
+      const updatedWallet = await updateWalletCredits(userId, newCredits);
+      logCreditUpdate({
+        userId,
+        before: creditAccount.credits,
+        after: updatedWallet.credits,
+        change: creditsToAdd,
+        source: 'payment-verify',
+      });
+    } else {
+      return res.status(400).json({
+        status: 'failed',
+        message: 'The paid plan does not grant access.',
+      });
+    }
 
     await supabaseAdmin
       .from('transactions')
@@ -161,11 +183,14 @@ export default async function handler(req, res) {
         status: 'success',
         reference,
         provider: 'paystack',
-        description: 'Credit purchase via Paystack',
+        description: matchedPlan.plan_code
+          ? `Access plan: ${matchedPlan.name}`
+          : 'Credit purchase via Paystack',
         metadata: {
           provider: 'paystack',
           transaction_id: String(verifyData.data?.id ?? ''),
-          currency: 'NGN',
+          currency: paidCurrency,
+          plan_code: matchedPlan.plan_code,
           gateway_response: verifyData.data?.gateway_response,
           channel: verifyData.data?.channel,
           paid_at: verifyData.data?.paid_at,
@@ -176,11 +201,11 @@ export default async function handler(req, res) {
 
     return res.status(200).json({
       status: 'success',
-      message: 'Payment verified and credits added',
+      message: matchedPlan.plan_code ? 'Payment verified and access granted' : 'Payment verified and credits added',
       amountPaid: amountKobo / 100,
-      newCredits: updatedWallet.credits,
+      currency: paidCurrency,
+      plan: matchedPlan.name,
       creditsAdded: creditsToAdd,
-      remainingSeconds: Math.floor(updatedWallet.credits / CREDITS_PER_SECOND),
     });
   } catch (error) {
     console.error('Paystack verify error:', error);

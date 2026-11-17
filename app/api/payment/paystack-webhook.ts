@@ -1,25 +1,7 @@
 // @ts-nocheck
 import crypto from 'crypto';
 import { supabaseAdmin, supabaseAdminConfigError } from '../supabase.js';
-import { requireWalletByUserId, logCreditUpdate, updateWalletCredits } from '../credit-utils.js';
-
-const CREDIT_PRICING_NGN = {
-  500: 14000,
-  1000: 28000,
-  2000: 56000,
-  5000: 140000
-};
-
-const CREDITS_PER_SECOND = 2;
-
-function toKobo(amountNGN) {
-  const amount = Number(amountNGN);
-  return Number.isFinite(amount) ? Math.round(amount * 100) : NaN;
-}
-
-const CREDIT_PRICING_KOBO = Object.fromEntries(
-  Object.entries(CREDIT_PRICING_NGN).map(([credits, ngn]) => [credits, toKobo(ngn)])
-);
+import { requireWalletByUserId } from '../credit-utils.js';
 
 function getHeader(req, name) {
   const value = req.headers?.[name] ?? req.headers?.[name.toLowerCase()];
@@ -80,8 +62,9 @@ export default async function handler(req, res) {
       return res.status(200).json({ status: 'ok' });
     }
 
-    if (event?.data?.currency && event.data.currency !== 'NGN') {
-      console.warn(`Webhook: unexpected currency ${event.data.currency} for reference ${reference}`);
+    const paidCurrency = event?.data?.currency || 'NGN';
+    if (paidCurrency !== 'NGN' && paidCurrency !== 'USD') {
+      console.warn(`Webhook: unexpected currency ${paidCurrency} for reference ${reference}`);
       return res.status(200).json({ status: 'ok' });
     }
 
@@ -98,29 +81,41 @@ export default async function handler(req, res) {
       return res.status(200).json({ status: 'ok' });
     }
 
-    let creditsToAdd = 0;
-    for (const [credits, expectedKobo] of Object.entries(CREDIT_PRICING_KOBO)) {
-      if (amountKobo === expectedKobo) {
-        creditsToAdd = Number(credits);
-        break;
-      }
-    }
+    const { data: plans, error: plansError } = await supabaseAdmin
+      .from('credit_packages')
+      .select('id, name, price_ngn, price_usd, credits, plan_code')
+      .eq('is_active', true);
 
-    if (creditsToAdd === 0) {
-      console.error(`Webhook: amount ₦${(amountKobo / 100).toLocaleString()} does not match any valid credit tier.`);
+    if (plansError || !plans) {
+      console.error('Webhook: could not load access plans');
       return res.status(200).json({ status: 'ok' });
     }
 
-    const creditAccount = await requireWalletByUserId(userId, { createIfMissing: true });
-    const newCredits = creditAccount.credits + creditsToAdd;
-    const updatedWallet = await updateWalletCredits(userId, newCredits);
-    logCreditUpdate({
-      userId,
-      before: creditAccount.credits,
-      after: updatedWallet.credits,
-      change: creditsToAdd,
-      source: 'payment-webhook',
+    const matchedPlan = plans.find((plan) => {
+      const expected = paidCurrency === 'USD' ? Number(plan.price_usd) : Number(plan.price_ngn);
+      return Math.round(expected * 100) === amountKobo;
     });
+
+    if (!matchedPlan) {
+      console.error(`Webhook: amount ${(amountKobo / 100).toLocaleString()} ${paidCurrency} does not match an active plan.`);
+      return res.status(200).json({ status: 'ok' });
+    }
+
+    const creditsToAdd = Number(matchedPlan.credits) || 0;
+    const creditAccount = await requireWalletByUserId(userId, { createIfMissing: true });
+
+    if (matchedPlan.plan_code) {
+      const { error: accessError } = await supabaseAdmin.rpc('grant_plan_access', {
+        p_user_id: userId,
+        p_package_id: matchedPlan.id,
+        p_amount: amountKobo / 100,
+        p_currency: paidCurrency,
+      });
+      if (accessError) {
+        console.error('Webhook: access grant failed', accessError);
+        return res.status(200).json({ status: 'ok' });
+      }
+    }
 
     await supabaseAdmin
       .from('transactions')
@@ -133,14 +128,14 @@ export default async function handler(req, res) {
         status: 'success',
         reference,
         provider: 'paystack',
-        description: 'Credit purchase via Paystack webhook',
+        description: matchedPlan.plan_code ? `Access plan: ${matchedPlan.name}` : 'Credit purchase via Paystack webhook',
         metadata: {
           provider: 'paystack',
           transaction_id: String(event?.data?.id ?? ''),
-          currency: 'NGN',
+          currency: paidCurrency,
+          plan_code: matchedPlan.plan_code,
           customer_email: event?.data?.customer?.email,
           source: 'webhook',
-          credits_per_second: CREDITS_PER_SECOND,
         },
         created_at: new Date().toISOString(),
       });

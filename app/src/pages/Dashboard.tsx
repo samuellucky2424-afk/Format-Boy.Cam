@@ -852,7 +852,7 @@ function Dashboard() {
                   className="h-[28px] px-2.5 bg-[#FFFFFF] text-[#000000] hover:bg-[#E5E5E5] transition-colors rounded-sm text-[11px] font-bold flex items-center gap-1 shadow-sm ml-1"
                >
                   <Plus className="w-3.5 h-3.5 stroke-[3]" />
-                  Buy Credits
+                  Plans
                </button>
             </div>
 

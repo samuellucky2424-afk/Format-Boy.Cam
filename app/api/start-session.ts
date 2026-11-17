@@ -1,6 +1,7 @@
 // @ts-nocheck
 import { supabaseAdmin, supabaseAdminConfigError } from './supabase.js';
 import { getWalletByUserId, logCreditUpdate, updateWalletCredits } from './credit-utils.js';
+import { getActiveAccess } from './access.js';
 import morphlyTokenHandler from '../server/morphly-token.js';
 
 const CREDITS_PER_SECOND = 2;
@@ -133,9 +134,10 @@ export default async function handler(req, res) {
     }
 
     const currentCredits = freshWallet.credits;
+    const access = await getActiveAccess(supabaseAdmin, userId);
 
-    if (currentCredits <= 0) {
-      return res.json({ allowed: false, error: 'Insufficient credits', credits: currentCredits });
+    if (!access && currentCredits <= 0) {
+      return res.json({ allowed: false, error: 'Your plan has expired. Choose a plan to keep streaming.', credits: currentCredits });
     }
 
     const { data: newSession, error: sessionError } = await supabaseAdmin
