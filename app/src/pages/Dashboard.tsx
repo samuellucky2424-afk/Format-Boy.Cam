@@ -522,7 +522,7 @@ function Dashboard() {
       return;
     }
     if (liveModel === 'm2' && !uploadedImage) {
-      toast.error('Model M2 needs an uploaded reference image before you start.');
+      toast.error('M2.5 needs an uploaded reference image before you start.');
       return;
     }
     if (!morphlySession.begin()) return; // Synchronous guard against double clicks.
@@ -787,7 +787,7 @@ function Dashboard() {
                 aria-label="Model"
                 value={liveModel}
                 disabled={phase !== 'idle'}
-                title={phase === 'idle' ? 'Choose Model M1 or Model M2' : 'Stop the session to change model'}
+                title={phase === 'idle' ? 'Choose M2.1 or M2.5' : 'Stop the session to change model'}
                 onChange={(event) => {
                   const next: LiveModelId = event.target.value === 'm2' ? 'm2' : 'm1';
                   setLiveModel(next);
@@ -829,7 +829,7 @@ function Dashboard() {
              <button
                onClick={openPromptModal}
                disabled={!isStreaming || liveModel === 'm2'}
-               title={liveModel === 'm2' ? 'Model M2 uses the uploaded image' : isStreaming ? 'Write and send a prompt' : 'Start a session to send a prompt'}
+               title={liveModel === 'm2' ? 'M2.5 uses the uploaded image' : isStreaming ? 'Write and send a prompt' : 'Start a session to send a prompt'}
                className="ml-1 h-[34px] min-w-[122px] shrink-0 px-4 flex items-center justify-center gap-2 rounded-sm border bg-[#1E1E1E] border-[#2A2A2A] text-[#A3A3A3] hover:border-[#3A3A3A] hover:text-white transition-all disabled:cursor-not-allowed disabled:opacity-40 disabled:hover:border-[#2A2A2A] disabled:hover:text-[#A3A3A3]"
              >
                <MessageSquare className="w-3.5 h-3.5 opacity-80" />

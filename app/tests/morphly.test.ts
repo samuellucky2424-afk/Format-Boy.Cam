@@ -48,7 +48,7 @@ test('proxy forwards full metered response, legacy model, exact origin and statu
   assert.equal(f.res.headers['Cache-Control'], 'no-store');
   assert.equal(f.res.headers['Access-Control-Allow-Origin'], origin);
 });
-test('new requests default to Model M1; canonical caller identity remains accepted', async () => {
+test('new requests default to M2.1; canonical caller identity remains accepted', async () => {
   const f = fixture();
   delete (f.req.body as { model?: string }).model;
   f.req.query.userId = 'canonical';
@@ -56,7 +56,7 @@ test('new requests default to Model M1; canonical caller identity remains accept
   assert.equal(f.res.statusCode, 201);
   assert.equal(f.forwarded()?.model, 'M 2.1');
 });
-test('Model M2 forwards the documented subject-replacement fields', async () => {
+test('M2.5 forwards the documented subject-replacement fields', async () => {
   const f = fixture();
   f.req.body.model = 'M2.5';
   f.req.body.image_url = 'https://example.com/reference.png';

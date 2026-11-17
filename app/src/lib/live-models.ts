@@ -2,8 +2,8 @@ export const LIVE_MODEL_STORAGE_KEY = 'callme.live-model';
 
 /** Exact session `model` values from https://morphly.fun/docs */
 export const LIVE_MODELS = {
-  m1: { id: 'm1' as const, label: 'Model M1', apiModel: 'M 2.1' },
-  m2: { id: 'm2' as const, label: 'Model M2', apiModel: 'M2.5' },
+  m1: { id: 'm1' as const, label: 'M2.1', apiModel: 'M 2.1' },
+  m2: { id: 'm2' as const, label: 'M2.5', apiModel: 'M2.5' },
 };
 
 export type LiveModelId = keyof typeof LIVE_MODELS;

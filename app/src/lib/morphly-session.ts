@@ -147,7 +147,7 @@ export function morphlyErrorMessage(error: unknown) {
     SESSION_DISCONNECTED: 'The live session disconnected. Start a new session.',
     IMAGE_UNAVAILABLE: 'The reference image could not be loaded.',
     PLAN_EXPIRED: 'Your access plan has expired. Choose a plan to keep streaming.',
-    REFERENCE_IMAGE_REQUIRED: 'Model M2 needs an uploaded reference image.',
+    REFERENCE_IMAGE_REQUIRED: 'M2.5 needs an uploaded reference image.',
   };
   const statuses: Record<number, string> = {
     400: 'The model, origin, or session duration was rejected.',

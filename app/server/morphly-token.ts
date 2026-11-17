@@ -170,7 +170,7 @@ export default async function handler(req, res, options = {}) {
     const duration = getRequestedDuration(req.body?.maxSessionSeconds);
     const model = resolveRealtimeModel(req.body?.model);
     if (duration === null || !model) {
-      return logged(400, { error: 'Use Model M1 or Model M2 and an integer duration from 1 to 300 seconds.', code: 'INVALID_SESSION_REQUEST' });
+      return logged(400, { error: 'Use M2.1 or M2.5 and an integer duration from 1 to 300 seconds.', code: 'INVALID_SESSION_REQUEST' });
     }
     const upstreamBody = {
       model,
@@ -181,10 +181,10 @@ export default async function handler(req, res, options = {}) {
       const imageUrl = typeof req.body?.image_url === 'string' ? req.body.image_url.trim() : '';
       const editingType = req.body?.editing_type ?? 'subject_replacement';
       if (!imageUrl || imageUrl.length > 12_000_000) {
-        return logged(400, { error: 'Model M2 needs a reference image.', code: 'REFERENCE_IMAGE_REQUIRED' });
+        return logged(400, { error: 'M2.5 needs a reference image.', code: 'REFERENCE_IMAGE_REQUIRED' });
       }
       if (editingType !== 'subject_replacement') {
-        return logged(400, { error: 'Model M2 only supports subject replacement.', code: 'INVALID_EDITING_TYPE' });
+        return logged(400, { error: 'M2.5 only supports subject replacement.', code: 'INVALID_EDITING_TYPE' });
       }
       upstreamBody.image_url = imageUrl;
       upstreamBody.editing_type = 'subject_replacement';
