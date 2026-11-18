@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import handler, { createMorphlySession, getRequestedDuration, normalizeMorphlyApiKey, resolveRealtimeModel } from '../server/morphly-token.ts';
 import { MorphlySessionOwner, morphlyDiagnostic, morphlyErrorMessage, readMorphlyBalance } from '../src/lib/morphly-session.ts';
 import type { MorphlySession } from '../src/lib/morphly-session.ts';
+import { settledSessionUsage } from '../server/session-usage.ts';
 
 const origin = 'http://localhost:5173';
 const upstreamBody = { session_id: 'fixture-session', session_token: 'opaque-session', client_token: 'opaque-client', expires_at: 'later', model: 'morphly-realtime', max_session_seconds: 30, balance: { available_credits: 50, reserved_credits: 60 } };
@@ -22,7 +23,6 @@ function fixture(overrides: Record<string, unknown> = {}) {
         } };
       return query;
     },
-    rpc: async () => ({ data: true }),
   };
   const req = { method: 'POST', headers: { origin, authorization: 'Bearer fake-login' }, query: { userId: 'user-1' }, body: { model: 'lucy-2.5', origin, maxSessionSeconds: 30 } };
   const res = { statusCode: 0, body: null as unknown, headers: {} as Record<string, string>,
@@ -73,13 +73,14 @@ test('M2.5 forwards the documented subject-replacement fields', async () => {
   assert.equal(resolveRealtimeModel('M 2.1'), 'M 2.1');
   assert.equal(resolveRealtimeModel('m2.5'), 'M2.5');
 });
-test('app billing activates only after a successful Morphly credential response', async () => {
+test('credential issuance is only recorded after a successful Morphly response', async () => {
   const f = fixture();
   await handler(f.req, f.res, f.options);
   assert.equal(f.activations.length, 1);
   const metadata = f.activations[0].metadata as Record<string, unknown>;
   assert.equal(metadata.existing, true);
   assert.ok(Number.isFinite(Date.parse(String(metadata.realtime_credential_issued_at))));
+  assert.equal(metadata.first_output_at, undefined);
   const rejected = fixture({ fetchImplementation: async () => Response.json({ code: 'INSUFFICIENT_CREDITS' }, { status: 402 }) });
   await handler(rejected.req, rejected.res, rejected.options);
   assert.equal(rejected.res.statusCode, 402);
@@ -112,19 +113,27 @@ test('invalid JWT and unrelated canonical account are rejected', async () => {
 });
 test('duration is validated, not silently rounded, clamped or defaulted', () => {
   assert.equal(getRequestedDuration(undefined), 300);
-  for (const invalid of [0, -1, 1.5, 301, '30', NaN, Infinity]) assert.equal(getRequestedDuration(invalid), null);
+  for (const invalid of [0, -1, 1.5, 3601, '30', NaN, Infinity]) assert.equal(getRequestedDuration(invalid), null);
   assert.equal(getRequestedDuration(30), 30);
+  assert.equal(getRequestedDuration(3600), 3600);
 });
-test('invalid model/duration, empty wallet and rate limit fail before creation', async () => {
+test('invalid duration and empty wallet fail before creation', async () => {
   const invalid = fixture(); invalid.req.body.maxSessionSeconds = 0;
   await handler(invalid.req, invalid.res, invalid.options);
   assert.equal(invalid.res.statusCode, 400); assert.equal(invalid.fetches(), 0);
   const empty = fixture({ getWallet: async () => ({ credits: 0 }) });
   await handler(empty.req, empty.res, empty.options);
   assert.equal(empty.res.statusCode, 402); assert.equal(empty.fetches(), 0);
-  const rate = fixture(); rate.admin.rpc = async () => ({ data: false });
-  await handler(rate.req, rate.res, rate.options);
-  assert.equal(rate.res.statusCode, 429); assert.equal(rate.fetches(), 0);
+});
+test('sessions without output settle at zero and startup time is excluded from successful sessions', () => {
+  const credential = { realtime_credential_issued_at: '2026-11-18T12:00:00Z' };
+  const now = Date.parse('2026-11-18T12:12:00Z');
+  assert.equal(settledSessionUsage(credential, now).seconds, 0);
+  assert.equal(settledSessionUsage({
+    ...credential,
+    first_output_at: '2026-11-18T12:00:15Z',
+    last_heartbeat: '2026-11-18T12:11:00Z',
+  }, now).seconds, 648);
 });
 test('service setup error preserves body/status, without retries or replacement sessions', async () => {
   let attempts = 0;

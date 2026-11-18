@@ -2,15 +2,9 @@
 import { supabaseAdmin, supabaseAdminConfigError } from './supabase.js';
 import { getWalletByUserId, logCreditUpdate, updateWalletCredits } from './credit-utils.js';
 import { getActiveAccess } from './access.js';
+import { settledSessionUsage } from '../server/session-usage.js';
 
 const CREDITS_PER_SECOND = 2;
-const MAX_SESSION_DURATION = 600;
-const HEARTBEAT_GRACE_SECONDS = 3;
-
-function hasRealtimeCredential(metadata) {
-  return typeof metadata?.realtime_credential_issued_at === 'string'
-    && Number.isFinite(Date.parse(metadata.realtime_credential_issued_at));
-}
 
 async function closeActiveSession(userId, activeSession) {
   try {
@@ -18,41 +12,8 @@ async function closeActiveSession(userId, activeSession) {
     if (!wallet) throw new Error('Wallet not found');
 
     const actualCredits = wallet.credits;
-    let startTimeStr = typeof activeSession?.start_time === 'string'
-      ? activeSession.start_time
-      : activeSession?.start_time
-        ? new Date(activeSession.start_time).toISOString()
-        : new Date().toISOString();
-    if (!startTimeStr.endsWith('Z') && !startTimeStr.includes('+')) {
-      startTimeStr = startTimeStr.replace(' ', 'T') + 'Z';
-    }
-    const startTime = new Date(startTimeStr).getTime();
-
-    const metadata = activeSession?.metadata && typeof activeSession.metadata === 'object'
-      ? activeSession.metadata
-      : {};
-    const realtimeCredentialIssued = hasRealtimeCredential(metadata);
-    const credentialIssuedMs = realtimeCredentialIssued
-      ? Date.parse(metadata.realtime_credential_issued_at)
-      : NaN;
-    const billableStartMs = Number.isFinite(credentialIssuedMs)
-      ? Math.max(startTime, credentialIssuedMs)
-      : startTime;
-
-    const lastHeartbeatRaw = metadata?.last_heartbeat;
-    const lastHeartbeatMs = typeof lastHeartbeatRaw === 'string' ? new Date(lastHeartbeatRaw).getTime() : NaN;
-
-    const nowMs = Date.now();
-    const maxEndMs = billableStartMs + MAX_SESSION_DURATION * 1000;
-
-    const billingEndMs = !realtimeCredentialIssued
-      ? billableStartMs
-      : Number.isFinite(lastHeartbeatMs)
-        ? Math.min(nowMs, lastHeartbeatMs + HEARTBEAT_GRACE_SECONDS * 1000, maxEndMs)
-        : Math.min(nowMs, maxEndMs);
-
-    const billableMs = Math.max(0, billingEndMs - billableStartMs);
-    const elapsedSeconds = Math.floor(billableMs / 1000);
+    const metadata = activeSession.metadata ?? {};
+    const { seconds: elapsedSeconds, endTime } = settledSessionUsage(metadata, Date.now());
     const creditsPerSecond = Number.isFinite(activeSession?.credits_per_second)
       ? activeSession.credits_per_second
       : CREDITS_PER_SECOND;
@@ -62,18 +23,19 @@ async function closeActiveSession(userId, activeSession) {
     const finalCost = access ? 0 : Math.min(actualCredits, cost);
     const newCredits = Math.max(0, actualCredits - finalCost);
 
-    await supabaseAdmin
+    const { data: closedSession, error: closeError } = await supabaseAdmin
       .from('sessions')
       .update({
-        end_time: new Date(billingEndMs).toISOString(),
+        end_time: new Date(endTime).toISOString(),
         cost: finalCost,
         seconds_used: elapsedSeconds,
         credits_used: finalCost,
         status: 'ended',
-        metadata: realtimeCredentialIssued
-          ? metadata
-          : { ...metadata, ended_without_realtime_credential_at: new Date(nowMs).toISOString() },
-      }).eq('id', activeSession.id).eq('status', 'active');
+      }).eq('id', activeSession.id).eq('status', 'active').select('id').maybeSingle();
+    if (closeError) throw closeError;
+    if (!closedSession || finalCost === 0) {
+      return { success: true, deducted: 0, remainingCredits: actualCredits };
+    }
 
     const updatedWallet = await updateWalletCredits(userId, newCredits);
     logCreditUpdate({
@@ -88,7 +50,6 @@ async function closeActiveSession(userId, activeSession) {
       deducted: finalCost,
       seconds: elapsedSeconds,
       accessPlan: access?.plan_name || null,
-      realtime: realtimeCredentialIssued,
     });
 
     if (finalCost > 0) {

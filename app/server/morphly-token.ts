@@ -17,7 +17,9 @@ export function resolveRealtimeModel(value) {
   if (compact === 'm2.5') return SUBJECT_MODEL;
   return null;
 }
-const MAX_MORPHLY_SESSION_SECONDS = 300;
+const DEFAULT_MORPHLY_SESSION_SECONDS = 300;
+// The hosted SDK validates provider credentials against this upper bound.
+const MAX_MORPHLY_SESSION_SECONDS = 3600;
 
 function getRequestedUserId(req) {
   const queryUserId = Array.isArray(req.query?.userId)
@@ -28,7 +30,7 @@ function getRequestedUserId(req) {
 }
 
 export function getRequestedDuration(value) {
-  if (value == null) return MAX_MORPHLY_SESSION_SECONDS;
+  if (value == null) return DEFAULT_MORPHLY_SESSION_SECONDS;
   return typeof value === 'number' && Number.isInteger(value) && value >= 1 &&
     value <= MAX_MORPHLY_SESSION_SECONDS ? value : null;
 }
@@ -170,7 +172,7 @@ export default async function handler(req, res, options = {}) {
     const duration = getRequestedDuration(req.body?.maxSessionSeconds);
     const model = resolveRealtimeModel(req.body?.model);
     if (duration === null || !model) {
-      return logged(400, { error: 'Use M2.1 or M2.5 and an integer duration from 1 to 300 seconds.', code: 'INVALID_SESSION_REQUEST' });
+      return logged(400, { error: 'Use M2.1 or M2.5 and an integer duration from 1 to 3600 seconds.', code: 'INVALID_SESSION_REQUEST' });
     }
     const upstreamBody = {
       model,
@@ -221,14 +223,6 @@ export default async function handler(req, res, options = {}) {
       });
     }
 
-    const { data: rateAllowed, error: rateError } = await admin.rpc('claim_morphly_session_attempt', { p_user_id: userId });
-    if (rateError) {
-      return logged(503, { error: 'Live session rate limiting is not configured.', code: 'RATE_LIMIT_UNAVAILABLE' });
-    }
-    if (rateAllowed !== true) {
-      res.setHeader('Retry-After', '60');
-      return logged(429, { error: 'Wait a minute before starting again.', code: 'RATE_LIMITED' });
-    }
     const { response: upstream, result, attempts } = await createMorphlySession({
       morphlyApiKey,
       body: upstreamBody,
@@ -262,10 +256,7 @@ export default async function handler(req, res, options = {}) {
       return res.status(upstream.status).json(result);
     }
 
-    // A session created by /start-session is only billable once a realtime
-    // credential exists. This route is the final server-side step before the
-    // desktop client can connect, so recording it here prevents a rejected
-    // provider request from being charged when the client cleans up.
+    // Record credential issuance separately from the first output heartbeat.
     const metadata = activeSession.metadata && typeof activeSession.metadata === 'object'
       ? activeSession.metadata
       : {};
@@ -281,7 +272,7 @@ export default async function handler(req, res, options = {}) {
       .eq('status', 'active');
 
     if (activationError) {
-      console.error('Could not activate billable realtime session.');
+      console.error('Could not record realtime credential issuance.');
       return logged(500, {
         error: 'Could not prepare the realtime session.',
         code: 'SESSION_ACTIVATION_FAILED',

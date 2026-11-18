@@ -1,6 +1,6 @@
 import { useState, useRef, useEffect, useCallback, useSyncExternalStore } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Upload, Play, Square, Clock, Zap, Monitor, Plus, Coins, Minus, X, Settings, Eye, EyeOff, Camera } from 'lucide-react';
+import { Upload, Play, Square, Zap, Monitor, Plus, Coins, Minus, X, Settings, Eye, EyeOff, Camera } from 'lucide-react';
 import { toast } from 'sonner';
 import { useAuth } from '@/context/AuthContext';
 import { useApp } from '@/context/AppContext';
@@ -21,7 +21,6 @@ const MORPHLY_REALTIME_WIDTH = 1280;
 const MORPHLY_REALTIME_HEIGHT = 720;
 const MORPHLY_REALTIME_FPS = 30;
 const MORPHLY_OUTPUT_RESOLUTION = '1080p';
-const MORPHLY_MAX_SESSION_SECONDS = 30;
 const MORPHLY_FIRST_FRAME_TIMEOUT_MS = 20_000;
 
 function isVirtualCameraSource(device: MediaDeviceInfo) {
@@ -426,6 +425,8 @@ function Dashboard() {
       },
     });
     const initialImage = uploadedImageRef.current ?? undefined;
+    let connectionError: unknown;
+    const startedAt = Date.now();
     if (morphlySession.cancelled) return;
     const session = await client.realtime.connect(stream, {
       output: video,
@@ -436,23 +437,29 @@ function Dashboard() {
       audio: false,
       enhancePrompt: true,
       resolution: MORPHLY_OUTPUT_RESOLUTION,
-      maxSessionSeconds: MORPHLY_MAX_SESSION_SECONDS,
       onStateChange: (state: string) => {
-        if (attempt !== morphlySession.attempt) return;
+        if (attempt !== morphlySession.attempt || morphlySession.cancelled) return;
         if (state === 'disconnected' || state === 'failed') {
+          const error = connectionError ?? { code: 'SESSION_DISCONNECTED' };
+          emitElectronLog('warn', '[Morphly] Connection ended', {
+            ...morphlyDiagnostic(error), state, model: LIVE_MODELS[liveModel].label,
+            elapsedSeconds: Math.floor((Date.now() - startedAt) / 1000),
+          });
+          if (mountedRef.current) toast.error(morphlyErrorMessage(error));
           // SDK also stops on expiry/disconnection. Await that same stop object.
           void handleStop(false);
         }
       },
       onError: (error: unknown) => {
         if (attempt !== morphlySession.attempt) return;
+        connectionError = error;
         emitElectronLog('error', '[Morphly]', morphlyDiagnostic(error));
       },
     });
     morphlySession.attach(session);
     // Explicitly apply the latest selection to the connected engine. The file
     // may have changed while camera capture or SDK connection was pending.
-    let appliedImage: File | null = null;
+    let appliedImage: File | null = liveModel === 'm2' ? initialImage ?? null : null;
     while (!morphlySession.cancelled && uploadedImageRef.current && uploadedImageRef.current !== appliedImage) {
       const image = uploadedImageRef.current;
       await applyMorphlyInput(session, liveModel, prompt, image);
@@ -467,7 +474,7 @@ function Dashboard() {
       if (mountedRef.current) toast.warning('Live session credits are running low.');
     });
     session.on('creditsExhausted', () => {
-      if (attempt !== morphlySession.attempt) return;
+      if (attempt !== morphlySession.attempt || morphlySession.cancelled) return;
       if (mountedRef.current) toast.error('Live session credits are exhausted. Stopping the session.');
       void handleStop(false);
     });
@@ -492,9 +499,11 @@ function Dashboard() {
     if (!morphlySession.cancelled) startVirtualCamera(video);
   };
 
-  const pollSessionStatus = async () => {
+  const pollSessionStatus = async (userId: string, sessionId: string, attempt: number) => {
     try {
-      const response = await apiRequest<{ credits?: number; secondsUsed: number; creditsUsed?: number; remainingCredits?: number; shouldStop: boolean; forceEnd?: boolean }>(`/session-status?userId=${user?.id}`);
+      const params = new URLSearchParams({ userId, sessionId });
+      const response = await apiRequest<{ credits?: number; secondsUsed: number; creditsUsed?: number; remainingCredits?: number; shouldStop: boolean; forceEnd?: boolean }>(`/session-status?${params}`, { cache: 'no-store' });
+      if (attempt !== morphlySession.attempt || morphlySession.cancelled) return;
       const latestCredits = isFiniteNumber(response.remainingCredits)
         ? response.remainingCredits
         : isFiniteNumber(response.credits)
@@ -510,7 +519,7 @@ function Dashboard() {
       if (response.shouldStop || response.forceEnd) {
         emitElectronLog('warn', '[Session] Auto-stopping from status poll', response);
         await handleStop(false);
-        toast.error('Session auto-ended - Insufficient credits');
+        if (mountedRef.current) toast.error('The app wallet ran out of credits.');
       }
     } catch (error) {
       console.error('Poll error:', error);
@@ -532,7 +541,7 @@ function Dashboard() {
     try {
       const stream = await startWebcam();
       if (!stream || morphlySession.cancelled) return;
-      const sessionResponse = await apiRequest<{ allowed: boolean; error?: string; credits?: number }>('/start-session', {
+      const sessionResponse = await apiRequest<{ allowed: boolean; error?: string; credits?: number; sessionId: string }>('/start-session', {
         method: 'POST',
         body: JSON.stringify({ userId: user.id }),
       });
@@ -553,8 +562,21 @@ function Dashboard() {
       if (morphlySession.cancelled) return;
       live = true;
       if (pollIntervalRef.current) clearInterval(pollIntervalRef.current);
-      // This is the existing app wallet policy, separate from SDK-owned Morphly billing.
-      pollIntervalRef.current = setInterval(() => { void pollSessionStatus(); }, POLLING_INTERVAL);
+      // The first output frame starts app-wallet billing.
+      const attempt = morphlySession.attempt;
+      const userId = user.id;
+      let polling = false;
+      const poll = async () => {
+        if (polling) return;
+        polling = true;
+        try {
+          await pollSessionStatus(userId, sessionResponse.sessionId, attempt);
+        } finally {
+          polling = false;
+        }
+      };
+      pollIntervalRef.current = setInterval(() => { void poll(); }, POLLING_INTERVAL);
+      void poll();
       toast.success(`Connected with ${LIVE_MODELS[liveModel].label}`);
     } catch (error) {
       const message = morphlyErrorMessage(error);
@@ -830,13 +852,6 @@ function Dashboard() {
                </button>
             </div>
 
-            <div className="hidden items-center h-full gap-3 px-5 border-l border-[#0F284B] bg-[#0E1524] min-w-[140px] min-[1000px]:flex">
-               <Clock className="w-4 h-4 text-[#3B82F6] stroke-[2.5]" />
-               <div className="flex flex-col justify-center gap-[2px]">
-                  <span className="text-[8px] text-[#60A5FA] font-bold tracking-widest uppercase">Session limit</span>
-                  <span className="text-xs font-bold text-[#E5E5E5]">{MORPHLY_MAX_SESSION_SECONDS}s</span>
-               </div>
-            </div>
           </div>
        </footer>
 
