@@ -12,6 +12,7 @@ import { supabase } from '@/lib/supabase';
 import { morphlySession, morphlyDiagnostic, morphlyErrorMessage } from '@/lib/morphly-session';
 import { LIVE_MODELS, loadLiveModel, saveLiveModel, type LiveModelId } from '@/lib/live-models';
 import { applyMorphlyInput } from '@/lib/morphly-input';
+import { MORPHLY_MAX_SESSION_SECONDS } from '@/lib/morphly-duration';
 
 const PREVIEW_WINDOW_NAME = 'format-boy-preview';
 const PREVIEW_WINDOW_FEATURES = 'popup=yes,width=1280,height=720,minWidth=640,minHeight=360,resizable=yes,scrollbars=no';
@@ -21,7 +22,6 @@ const MORPHLY_REALTIME_WIDTH = 1280;
 const MORPHLY_REALTIME_HEIGHT = 720;
 const MORPHLY_REALTIME_FPS = 30;
 const MORPHLY_OUTPUT_RESOLUTION = '1080p';
-const MORPHLY_REQUESTED_SESSION_SECONDS = 30 * 60;
 const MORPHLY_FIRST_FRAME_TIMEOUT_MS = 20_000;
 
 function isVirtualCameraSource(device: MediaDeviceInfo) {
@@ -438,7 +438,7 @@ function Dashboard() {
       audio: false,
       enhancePrompt: true,
       resolution: MORPHLY_OUTPUT_RESOLUTION,
-      maxSessionSeconds: MORPHLY_REQUESTED_SESSION_SECONDS,
+      maxSessionSeconds: MORPHLY_MAX_SESSION_SECONDS,
       onStateChange: (state: string) => {
         if (attempt !== morphlySession.attempt || morphlySession.cancelled) return;
         if (state === 'disconnected' || state === 'failed') {

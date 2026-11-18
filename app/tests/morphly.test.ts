@@ -51,24 +51,24 @@ test('proxy forwards full metered response, legacy model, exact origin and statu
 test('new requests default to M2.1; canonical caller identity remains accepted', async () => {
   const f = fixture();
   delete (f.req.body as { model?: string }).model;
-  f.req.body.maxSessionSeconds = 1800;
+  f.req.body.maxSessionSeconds = 3600;
   f.req.query.userId = 'canonical';
   await handler(f.req, f.res, f.options);
   assert.equal(f.res.statusCode, 201);
   assert.equal(f.forwarded()?.model, 'M 2.1');
-  assert.equal(f.forwarded()?.max_session_seconds, 1800);
+  assert.equal(f.forwarded()?.max_session_seconds, 3600);
 });
 test('M2.5 forwards the documented subject-replacement fields', async () => {
   const f = fixture();
   f.req.body.model = 'M2.5';
-  f.req.body.maxSessionSeconds = 1800;
+  f.req.body.maxSessionSeconds = 3600;
   f.req.body.image_url = 'https://example.com/reference.png';
   f.req.body.editing_type = 'subject_replacement';
   await handler(f.req, f.res, f.options);
   assert.equal(f.res.statusCode, 201);
   assert.deepEqual(f.forwarded(), {
     model: 'M2.5',
-    max_session_seconds: 1800,
+    max_session_seconds: 3600,
     origin,
     image_url: 'https://example.com/reference.png',
     editing_type: 'subject_replacement',
@@ -115,7 +115,7 @@ test('invalid JWT and unrelated canonical account are rejected', async () => {
   assert.equal(g.fetches(), 0);
 });
 test('duration is validated, not silently rounded, clamped or defaulted', () => {
-  assert.equal(getRequestedDuration(undefined), 300);
+  assert.equal(getRequestedDuration(undefined), 3600);
   for (const invalid of [0, -1, 1.5, 3601, '30', NaN, Infinity]) assert.equal(getRequestedDuration(invalid), null);
   assert.equal(getRequestedDuration(30), 30);
   assert.equal(getRequestedDuration(3600), 3600);

@@ -2,6 +2,7 @@
 import { supabaseAdmin, supabaseAdminConfigError } from '../api/supabase.js';
 import { getWalletByUserId } from '../api/credit-utils.js';
 import { getActiveAccess } from '../api/access.js';
+import { MORPHLY_MAX_SESSION_SECONDS } from '../src/lib/morphly-duration.js';
 
 const MORPHLY_SESSION_URL = 'https://api.morphly.fun/v1/realtime/sessions';
 const PROMPT_MODEL = 'M 2.1';
@@ -17,10 +18,6 @@ export function resolveRealtimeModel(value) {
   if (compact === 'm2.5') return SUBJECT_MODEL;
   return null;
 }
-const DEFAULT_MORPHLY_SESSION_SECONDS = 300;
-// The hosted SDK validates provider credentials against this upper bound.
-const MAX_MORPHLY_SESSION_SECONDS = 3600;
-
 function getRequestedUserId(req) {
   const queryUserId = Array.isArray(req.query?.userId)
     ? req.query.userId[0]
@@ -30,9 +27,9 @@ function getRequestedUserId(req) {
 }
 
 export function getRequestedDuration(value) {
-  if (value == null) return DEFAULT_MORPHLY_SESSION_SECONDS;
+  if (value == null) return MORPHLY_MAX_SESSION_SECONDS;
   return typeof value === 'number' && Number.isInteger(value) && value >= 1 &&
-    value <= MAX_MORPHLY_SESSION_SECONDS ? value : null;
+    value <= MORPHLY_MAX_SESSION_SECONDS ? value : null;
 }
 
 export function normalizeMorphlyApiKey(value) {
@@ -172,7 +169,7 @@ export default async function handler(req, res, options = {}) {
     const duration = getRequestedDuration(req.body?.maxSessionSeconds);
     const model = resolveRealtimeModel(req.body?.model);
     if (duration === null || !model) {
-      return logged(400, { error: 'Use M2.1 or M2.5 and an integer duration from 1 to 3600 seconds.', code: 'INVALID_SESSION_REQUEST' });
+      return logged(400, { error: `Use M2.1 or M2.5 and an integer duration from 1 to ${MORPHLY_MAX_SESSION_SECONDS} seconds.`, code: 'INVALID_SESSION_REQUEST' });
     }
     const upstreamBody = {
       model,
