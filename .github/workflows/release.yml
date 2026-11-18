@@ -97,9 +97,9 @@ jobs:
           VITE_SUPABASE_URL: ${{ secrets.VITE_SUPABASE_URL }}
           VITE_SUPABASE_ANON_KEY: ${{ secrets.VITE_SUPABASE_ANON_KEY }}
 
-      - name: Verify session integration and desktop assets
+      - name: Verify checkout, sessions, and desktop assets
         working-directory: ./app
-        run: npm run test:morphly
+        run: npx tsx --test tests/*.test.ts
 
       - name: Find built installer
         id: find_installer
@@ -138,8 +138,8 @@ jobs:
           body: |
             ## CALL ME ${{ github.ref_name }}
 
-            - Request the Morphly SDK's maximum session duration for M2.1 and M2.5.
-            - Start app-wallet billing after the first transformed frame and show disconnect errors.
+            - Renew the sign-in session and retry once when crypto checkout rejects a stored token.
+            - Show a separate message when payment verification is temporarily unavailable.
 
             **SHA256:** `${{ steps.sha256.outputs.hash }}`
         env:

@@ -5,6 +5,7 @@ import { toast } from 'sonner';
 import { useAuth } from '@/context/AuthContext';
 import { supabase } from '@/lib/supabase';
 import { getApiUrl } from '@/lib/api-client';
+import { submitWithCheckoutSession } from '@/lib/checkout-session';
 import { accessLabel, formatPlanPrice } from '@/lib/access-plans';
 
 interface CryptoPaymentModalProps {
@@ -102,26 +103,18 @@ export function CryptoPaymentModal({ isOpen, onClose, plan }: CryptoPaymentModal
       if (!plan.id) throw new Error('Invalid plan');
       if (!paymentMethod) throw new Error('Select a payment method');
 
-      const {
-        data: { session },
-        error: sessionError,
-      } = await supabase.auth.getSession();
-      if (sessionError || !session?.access_token) {
-        throw new Error('Your session has expired. Please sign in again.');
-      }
-
-      const response = await fetch(getApiUrl('/payment/crypto-submit'), {
+      const response = await submitWithCheckoutSession(supabase.auth, user.authId, (accessToken) => fetch(getApiUrl('/payment/crypto-submit'), {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
-          Authorization: `Bearer ${session.access_token}`,
+          Authorization: `Bearer ${accessToken}`,
         },
         body: JSON.stringify({
           packageId: plan.id,
           paymentMethodId: paymentMethod.id,
           userId: user.id,
         }),
-      });
+      }));
 
       const result = await response.json().catch(() => ({}));
       if (!response.ok) {

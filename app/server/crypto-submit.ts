@@ -58,6 +58,17 @@ export default async function handler(req, res) {
     error: authError,
   } = await supabaseAdmin.auth.getUser(token);
 
+  if (authError && (![400, 401, 403, 404].includes(authError.status)
+      || /^invalid api key$/i.test(authError.message))) {
+    console.warn('[crypto-submit] Auth service could not verify session', {
+      status: authError.status,
+      code: authError.code,
+    });
+    return res.status(503).json({
+      error: 'Payment verification is temporarily unavailable. Try submitting again without sending another payment.',
+    });
+  }
+
   if (authError || !authUser) {
     return res.status(401).json({ error: 'Your session has expired. Please sign in again.' });
   }
