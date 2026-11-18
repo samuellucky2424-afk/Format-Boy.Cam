@@ -1,8 +1,10 @@
-import React, { createContext, useContext, useState, useEffect, useCallback, useRef } from 'react';
+import React, { createContext, useContext, useState, useEffect, useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { ROUTES } from '@/lib/routes';
 import { buildElectronCallbackUrl, buildGoogleCallbackPath, buildHashRouteUrl, normalizeRedirectPath } from '@/lib/auth';
 import { supabase } from '@/lib/supabase';
+import { observeAuthSession } from '@/lib/auth-session';
+import { toast } from 'sonner';
 import type { Session, User as SupabaseUser } from '@supabase/supabase-js';
 
 // ── Types ─────────────────────────────────────────────────────────────────────
@@ -28,10 +30,11 @@ interface AuthContextType {
   user: User | null;
   isAuthenticated: boolean;
   login: (email: string, password: string) => Promise<void>;
-  logout: () => void;
+  logout: () => Promise<void>;
   register: (email: string, name: string, password: string) => Promise<void>;
   signInWithGoogle: (redirectPath?: string) => Promise<void>;
   loading: boolean;
+  retryingSession: boolean;
   error: string | null;
   clearError: () => void;
 }
@@ -160,11 +163,9 @@ async function resolveCanonicalUserId(session: Session, fallbackId: string): Pro
 export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [user, setUser] = useState<User | null>(null);
   const [loading, setLoading] = useState(true);
+  const [retryingSession, setRetryingSession] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const navigate = useNavigate();
-
-  // Guard against running resolve-user concurrently for the same session.
-  const resolvingSessionRef = useRef<string | null>(null);
 
   /** Build a User from a Supabase session, resolving canonical ID on the backend. */
   const buildUser = useCallback(async (su: SupabaseUser, session: Session): Promise<User> => {
@@ -202,70 +203,41 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   }, []);
 
   useEffect(() => {
-    // Check active session on mount
-    supabase.auth.getSession().then(async ({ data: { session: currentSession } }) => {
-      try {
-        if (currentSession?.user) {
-          const built = await buildUser(currentSession.user, currentSession);
-          setUser(built);
-        } else {
-          setUser(null);
-        }
-      } catch (err) {
-        console.error('Error building user on mount:', err);
+    let generation = 0;
+    let profileTimer: ReturnType<typeof setTimeout> | undefined;
+    const unsubscribe = observeAuthSession(supabase.auth, (session) => {
+      const currentGeneration = ++generation;
+      clearTimeout(profileTimer);
+      setRetryingSession(false);
+
+      if (!session) {
         setUser(null);
-      } finally {
         setLoading(false);
+        return;
       }
-    }).catch((err) => {
-      console.error('getSession failed:', err);
-      setUser(null);
-      setLoading(false);
-    });
 
-    // Listen for auth state changes
-    const { data: { subscription } } = supabase.auth.onAuthStateChange(
-      (_event, currentSession) => {
-        if (!currentSession?.user) {
-          setUser(null);
+      // The SDK holds its auth lock while delivering events. Profile requests
+      // must run after the callback has returned.
+      const loadProfile = () => {
+        void buildUser(session.user, session).then((built) => {
+          if (generation !== currentGeneration) return;
+          setUser(built);
+          setRetryingSession(false);
           setLoading(false);
-          return;
-        }
-
-        // Deduplicate: only call resolve-user once per access token
-        const tokenKey = currentSession.access_token;
-        if (resolvingSessionRef.current === tokenKey) return;
-        resolvingSessionRef.current = tokenKey;
-
-        // Supabase warns against awaiting more Supabase calls inside this
-        // callback because the auth client still holds its internal lock. Run
-        // profile resolution on the next task so signInWithPassword can finish.
-        window.setTimeout(() => {
-          void (async () => {
-            try {
-              const built = await buildUser(currentSession.user, currentSession);
-              setUser(built);
-            } catch (err) {
-              console.error('Error building user on auth change:', err);
-              setUser(null);
-            } finally {
-              if (resolvingSessionRef.current === tokenKey) {
-                resolvingSessionRef.current = null;
-              }
-              setLoading(false);
-            }
-          })();
-        }, 0);
-      }
-    );
-
-    const timeoutId = setTimeout(() => {
-      setLoading(false);
-    }, 5000);
+        }).catch((err) => {
+          console.error('Could not load the signed-in profile:', err);
+          if (generation !== currentGeneration) return;
+          setRetryingSession(true);
+          profileTimer = setTimeout(loadProfile, 5000);
+        });
+      };
+      profileTimer = setTimeout(loadProfile, 0);
+    }, () => setRetryingSession(true));
 
     return () => {
-      subscription.unsubscribe();
-      clearTimeout(timeoutId);
+      generation++;
+      clearTimeout(profileTimer);
+      unsubscribe();
     };
   }, [buildUser]);
 
@@ -494,12 +466,14 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const logout = useCallback(async () => {
     setLoading(true);
     try {
-      await supabase.auth.signOut();
+      const { error: signOutError } = await supabase.auth.signOut({ scope: 'local' });
+      if (signOutError) throw signOutError;
       setUser(null);
       setError(null);
       navigate(ROUTES.PUBLIC.LOGIN, { replace: true });
     } catch (err) {
       console.error('Logout error:', err);
+      toast.error('Could not sign out. Check your connection and try again.');
     } finally {
       setLoading(false);
     }
@@ -514,6 +488,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       register,
       signInWithGoogle,
       loading,
+      retryingSession,
       error,
       clearError
     }}>

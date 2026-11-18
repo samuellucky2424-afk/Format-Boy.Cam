@@ -97,7 +97,7 @@ jobs:
           VITE_SUPABASE_URL: ${{ secrets.VITE_SUPABASE_URL }}
           VITE_SUPABASE_ANON_KEY: ${{ secrets.VITE_SUPABASE_ANON_KEY }}
 
-      - name: Verify checkout, sessions, and desktop assets
+      - name: Verify sign-in, checkout, sessions, and desktop assets
         working-directory: ./app
         run: npx tsx --test tests/*.test.ts
 
@@ -138,8 +138,8 @@ jobs:
           body: |
             ## CALL ME ${{ github.ref_name }}
 
-            - Renew the sign-in session and retry once when crypto checkout rejects a stored token.
-            - Show a separate message when payment verification is temporarily unavailable.
+            - Restore saved sign-in sessions across desktop restarts and retry temporary connection failures.
+            - Sign out of the current device while leaving other devices signed in.
 
             **SHA256:** `${{ steps.sha256.outputs.hash }}`
         env:

@@ -399,6 +399,9 @@ function createWindow() {
     mainWindow.loadURL('http://localhost:5173');
   }
 
+  mainWindow.on('close', () => {
+    rendererSession.flushStorageData();
+  });
   mainWindow.on('closed', () => {
     mainWindow = null;
   });
