@@ -51,21 +51,24 @@ test('proxy forwards full metered response, legacy model, exact origin and statu
 test('new requests default to M2.1; canonical caller identity remains accepted', async () => {
   const f = fixture();
   delete (f.req.body as { model?: string }).model;
+  f.req.body.maxSessionSeconds = 1800;
   f.req.query.userId = 'canonical';
   await handler(f.req, f.res, f.options);
   assert.equal(f.res.statusCode, 201);
   assert.equal(f.forwarded()?.model, 'M 2.1');
+  assert.equal(f.forwarded()?.max_session_seconds, 1800);
 });
 test('M2.5 forwards the documented subject-replacement fields', async () => {
   const f = fixture();
   f.req.body.model = 'M2.5';
+  f.req.body.maxSessionSeconds = 1800;
   f.req.body.image_url = 'https://example.com/reference.png';
   f.req.body.editing_type = 'subject_replacement';
   await handler(f.req, f.res, f.options);
   assert.equal(f.res.statusCode, 201);
   assert.deepEqual(f.forwarded(), {
     model: 'M2.5',
-    max_session_seconds: 30,
+    max_session_seconds: 1800,
     origin,
     image_url: 'https://example.com/reference.png',
     editing_type: 'subject_replacement',
