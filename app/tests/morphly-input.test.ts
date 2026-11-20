@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { applyMorphlyInput } from '../src/lib/morphly-input';
+import { applyMorphlyInput, DEFAULT_REFERENCE_PROMPT } from '../src/lib/morphly-input';
 import type { MorphlySession } from '../src/lib/morphly-session';
 
 function fixture() {
@@ -19,7 +19,7 @@ test('M2.1 sends the exact prompt together with the original reference file', as
   const image = new File(['reference fixture'], 'character.png', { type: 'image/png' });
   const prompt = 'Become the character in the reference image';
   await applyMorphlyInput(f.session, 'm1', prompt, image);
-  assert.deepEqual(f.updates, [{ prompt, enhance: true, image }]);
+  assert.deepEqual(f.updates, [{ prompt, image }]);
   assert.strictEqual((f.updates[0] as { image: File }).image, image);
   assert.deepEqual(f.prompts, []);
 });
@@ -30,8 +30,16 @@ test('changing the reference sends the new file with subsequent prompts', async 
   const second = new File(['second'], 'second.jpg', { type: 'image/jpeg' });
   await applyMorphlyInput(f.session, 'm1', 'first prompt', first);
   await applyMorphlyInput(f.session, 'm1', 'second prompt', second);
-  assert.deepEqual(f.updates[1], { prompt: 'second prompt', enhance: true, image: second });
+  assert.deepEqual(f.updates[1], { prompt: 'second prompt', image: second });
   assert.strictEqual((f.updates[1] as { image: File }).image, second);
+});
+
+test('an image with an empty prompt uses the documented character prompt', async () => {
+  const f = fixture();
+  const image = new File(['reference fixture'], 'character.png', { type: 'image/png' });
+  await applyMorphlyInput(f.session, 'm1', '   ', image);
+  assert.deepEqual(f.updates, [{ prompt: DEFAULT_REFERENCE_PROMPT, image }]);
+  assert.equal(DEFAULT_REFERENCE_PROMPT, "Use this character's appearance");
 });
 
 test('M2.1 without an image preserves text-only prompts', async () => {

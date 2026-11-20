@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import handler, { createMorphlySession, getRequestedDuration, normalizeMorphlyApiKey, resolveRealtimeModel } from '../server/morphly-token.ts';
+import handler, { createMorphlySession, getRequestedDuration, normalizeMorphlyApiKey, normalizeReferenceImageUrl, resolveRealtimeModel } from '../server/morphly-token.ts';
 import { MorphlySessionOwner, morphlyDiagnostic, morphlyErrorMessage, readMorphlyBalance } from '../src/lib/morphly-session.ts';
 import type { MorphlySession } from '../src/lib/morphly-session.ts';
 import { settledSessionUsage } from '../server/session-usage.ts';
@@ -75,6 +75,32 @@ test('M2.5 forwards the documented subject-replacement fields', async () => {
   });
   assert.equal(resolveRealtimeModel('M 2.1'), 'M 2.1');
   assert.equal(resolveRealtimeModel('m2.5'), 'M2.5');
+});
+test('M2.5 reference images must be a fetchable JPEG, PNG, or WebP', async () => {
+  const jpeg = 'data:image/jpeg;base64,aGVs\nbG8=';
+  assert.equal(normalizeReferenceImageUrl(jpeg), 'data:image/jpeg;base64,aGVsbG8=');
+  assert.equal(normalizeReferenceImageUrl('https://user:secret@example.com/reference.png'), null);
+  assert.equal(normalizeReferenceImageUrl('data:image/gif;base64,aGVsbG8='), null);
+  assert.equal(normalizeReferenceImageUrl('ssupload:?id=reference-1'), 'ssupload:?id=reference-1');
+  const f = fixture();
+  f.req.body.model = 'M2.5';
+  f.req.body.image_url = jpeg;
+  f.req.body.editing_type = 'subject_replacement';
+  await handler(f.req, f.res, f.options);
+  assert.equal(f.res.statusCode, 201);
+  assert.equal(f.forwarded()?.image_url, 'data:image/jpeg;base64,aGVsbG8=');
+  assert.equal(f.forwarded()?.editing_type, 'subject_replacement');
+  const rejected = fixture();
+  rejected.req.body.model = 'M2.5';
+  rejected.req.body.image_url = 'data:image/heic;base64,aGVsbG8=';
+  await handler(rejected.req, rejected.res, rejected.options);
+  assert.equal(rejected.res.statusCode, 400);
+  assert.equal((rejected.res.body as { code?: string }).code, 'REFERENCE_IMAGE_INVALID');
+  assert.equal(rejected.fetches(), 0);
+  assert.doesNotMatch(JSON.stringify(rejected.res.body), /Morphly/);
+  const message = morphlyErrorMessage({ code: 'REFERENCE_IMAGE_INVALID', status: 400 });
+  assert.match(message, /JPEG, PNG, or WebP/);
+  assert.doesNotMatch(message, /Morphly/);
 });
 test('credential issuance is only recorded after a successful Morphly response', async () => {
   const f = fixture();
