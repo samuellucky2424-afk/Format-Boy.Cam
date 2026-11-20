@@ -149,6 +149,7 @@ export function morphlyErrorMessage(error: unknown) {
     IMAGE_UNAVAILABLE: 'The reference image could not be loaded.',
     PLAN_EXPIRED: 'Your access plan has expired. Choose a plan to keep streaming.',
     REFERENCE_IMAGE_REQUIRED: 'M2.5 needs an uploaded reference image.',
+    REFERENCE_IMAGE_INVALID: 'Use a JPEG, PNG, or WebP reference image under 10 MB.',
   };
   const statuses: Record<number, string> = {
     400: 'The model, origin, or session duration was rejected.',

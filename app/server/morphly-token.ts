@@ -8,6 +8,48 @@ const MORPHLY_SESSION_URL = 'https://api.morphly.fun/v1/realtime/sessions';
 const PROMPT_MODEL = 'M 2.1';
 const SUBJECT_MODEL = 'M2.5';
 const LEGACY_PROMPT_MODELS = new Set(['lucy-2.5', 'morphly-realtime']);
+// Same reference-image contract the hosted SDK enforces before it builds image_url.
+const REFERENCE_DATA_URL = /^data:image\/(?:jpeg|jpg|png|webp);base64,[A-Za-z0-9+/]+={0,2}$/;
+const REFERENCE_UPLOAD = /^ssupload:\?id=\S+$/;
+const MAX_REFERENCE_URL_CHARS = 14_680_064;
+const MAX_REFERENCE_BYTES = 10 * 1024 * 1024;
+
+export function normalizeReferenceImageUrl(value) {
+  if (typeof value !== 'string') return null;
+  const trimmed = value.trim();
+  if (!trimmed) return null;
+  if (trimmed.startsWith('data:')) {
+    if (trimmed.length > MAX_REFERENCE_URL_CHARS + (1024 * 1024)) return null;
+    const compact = trimmed.replace(/\s+/g, '');
+    if (!compact || compact.length > MAX_REFERENCE_URL_CHARS || !REFERENCE_DATA_URL.test(compact)) return null;
+    const payload = compact.slice(compact.indexOf(',') + 1);
+    const padding = payload.endsWith('==') ? 2 : payload.endsWith('=') ? 1 : 0;
+    const bytes = Math.floor((payload.length * 3) / 4) - padding;
+    if (bytes < 1 || bytes > MAX_REFERENCE_BYTES) return null;
+    return compact;
+  }
+  if (trimmed.length > MAX_REFERENCE_URL_CHARS) return null;
+  if (REFERENCE_UPLOAD.test(trimmed)) return trimmed;
+  try {
+    const url = new URL(trimmed);
+    if ((url.protocol === 'https:' || url.protocol === 'http:') && !url.username && !url.password) return trimmed;
+  } catch {
+    return null;
+  }
+  return null;
+}
+
+function referenceImageKind(url) {
+  if (typeof url !== 'string' || !url) return 'missing';
+  if (url.startsWith('data:image/')) {
+    const type = url.slice('data:image/'.length, url.indexOf(';'));
+    return `data:${type}:${url.length}`;
+  }
+  if (url.startsWith('ssupload:')) return 'ssupload';
+  if (url.startsWith('https:')) return `https:${url.length}`;
+  if (url.startsWith('http:')) return `http:${url.length}`;
+  return 'other';
+}
 
 export function resolveRealtimeModel(value) {
   if (value == null || value === '') return PROMPT_MODEL;
@@ -177,10 +219,13 @@ export default async function handler(req, res, options = {}) {
       origin,
     };
     if (model === SUBJECT_MODEL) {
-      const imageUrl = typeof req.body?.image_url === 'string' ? req.body.image_url.trim() : '';
+      const imageUrl = normalizeReferenceImageUrl(req.body?.image_url);
       const editingType = req.body?.editing_type ?? 'subject_replacement';
-      if (!imageUrl || imageUrl.length > 12_000_000) {
-        return logged(400, { error: 'M2.5 needs a reference image.', code: 'REFERENCE_IMAGE_REQUIRED' });
+      if (!imageUrl) {
+        const provided = typeof req.body?.image_url === 'string' && req.body.image_url.trim();
+        return logged(400, provided
+          ? { error: 'Use a JPEG, PNG, or WebP reference image under 10 MB.', code: 'REFERENCE_IMAGE_INVALID' }
+          : { error: 'M2.5 needs a reference image.', code: 'REFERENCE_IMAGE_REQUIRED' });
       }
       if (editingType !== 'subject_replacement') {
         return logged(400, { error: 'M2.5 only supports subject replacement.', code: 'INVALID_EDITING_TYPE' });
@@ -240,6 +285,8 @@ export default async function handler(req, res, options = {}) {
         status: upstream.status,
         code,
         attempts,
+        model,
+        reference: referenceImageKind(upstreamBody.image_url),
       });
       // Morphly rejects a bad server key with HTTP 401 and no code. Forwarding
       // that unchanged makes the desktop app tell a signed-in user to sign in again.

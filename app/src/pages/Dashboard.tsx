@@ -12,6 +12,7 @@ import { supabase } from '@/lib/supabase';
 import { morphlySession, morphlyDiagnostic, morphlyErrorMessage } from '@/lib/morphly-session';
 import { LIVE_MODELS, loadLiveModel, saveLiveModel, type LiveModelId } from '@/lib/live-models';
 import { applyMorphlyInput } from '@/lib/morphly-input';
+import { prepareReferenceImage } from '@/lib/reference-image';
 import { MORPHLY_MAX_SESSION_SECONDS } from '@/lib/morphly-duration';
 
 const PREVIEW_WINDOW_NAME = 'format-boy-preview';
@@ -85,6 +86,7 @@ function Dashboard() {
   const [isGhostMode, setIsGhostMode] = useState(false);
   const [uploadedImage, setUploadedImage] = useState<File | null>(null);
   const uploadedImageRef = useRef<File | null>(null);
+  const imageSelectionRef = useRef(0);
   const [cameraDevices, setCameraDevices] = useState<MediaDeviceInfo[]>([]);
   const [selectedCameraId, setSelectedCameraId] = useState<string>('');
   const [cameraDiscoveryMessage, setCameraDiscoveryMessage] = useState('Finding cameras...');
@@ -459,14 +461,18 @@ function Dashboard() {
       },
     });
     morphlySession.attach(session);
-    // Explicitly apply the latest selection to the connected engine. The file
-    // may have changed while camera capture or SDK connection was pending.
+    // M 2.1 applies a reference image with session.set({ prompt, image }) after
+    // the room exists. M2.5 already sent image_url on the token request.
+    // The file may have changed while camera capture or connection was pending.
     let appliedImage: File | null = liveModel === 'm2' ? initialImage ?? null : null;
-    while (!morphlySession.cancelled && uploadedImageRef.current && uploadedImageRef.current !== appliedImage) {
-      const image = uploadedImageRef.current;
-      await applyMorphlyInput(session, liveModel, prompt, image);
-      appliedImage = image;
-    }
+    const applyCurrentImage = async () => {
+      while (!morphlySession.cancelled && uploadedImageRef.current && uploadedImageRef.current !== appliedImage) {
+        const image = uploadedImageRef.current;
+        await applyMorphlyInput(session, liveModel, prompt, image);
+        appliedImage = image;
+      }
+    };
+    await applyCurrentImage();
     session.on('balance', (value: unknown) => {
       if (attempt !== morphlySession.attempt) return;
       morphlySession.updateBalance(value);
@@ -498,6 +504,11 @@ function Dashboard() {
         }
       }, 100);
     });
+    if (morphlySession.cancelled) return;
+    // The first output frame means the room has joined. Re-send an M 2.1 image
+    // here: a set() issued before join is dropped and the camera stays unchanged.
+    if (liveModel !== 'm2') appliedImage = null;
+    await applyCurrentImage();
     if (!morphlySession.cancelled) startVirtualCamera(video);
   };
 
@@ -628,14 +639,33 @@ function Dashboard() {
 
   const handleFileChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
-    if (file) {
-      uploadedImageRef.current = file;
-      setUploadedImage(file);
-      if (isStreaming) {
-        await applyTransformation(file);
-      } else {
-        toast.success(isLoading ? 'Image selected. It will be applied when connected.' : 'Image selected. Click Start to begin streaming.');
+    e.target.value = '';
+    if (!file) return;
+    const selection = ++imageSelectionRef.current;
+    uploadedImageRef.current = file;
+    setUploadedImage(file);
+    let prepared = file;
+    try {
+      prepared = await prepareReferenceImage(file);
+    } catch (error) {
+      if (selection !== imageSelectionRef.current) return;
+      if (uploadedImageRef.current === file) {
+        uploadedImageRef.current = null;
+        setUploadedImage(null);
       }
+      emitElectronLog('error', '[Session] Reference image rejected', morphlyDiagnostic(error));
+      toast.error(morphlyErrorMessage(error));
+      return;
+    }
+    if (selection !== imageSelectionRef.current) return;
+    uploadedImageRef.current = prepared;
+    setUploadedImage(prepared);
+    // Apply while connecting as well as while live. Phase is still "starting"
+    // during the first-frame wait, after the post-connect send has finished.
+    if (morphlySession.session) {
+      await applyTransformation(prepared);
+    } else {
+      toast.success(isLoading ? 'Image selected. It will be applied when connected.' : 'Image selected. Click Start to begin streaming.');
     }
   };
 
