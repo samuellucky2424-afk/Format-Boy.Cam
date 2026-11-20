@@ -7,6 +7,7 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { useAuth } from '@/context/AuthContext';
 import { GOOGLE_AUTH_MESSAGE_TYPE, normalizeRedirectPath } from '@/lib/auth';
 import { ROUTES } from '@/lib/routes';
+import ForgotPassword from '@/components/ForgotPassword';
 import { toast } from 'sonner';
 
 function Login() {
@@ -21,6 +22,8 @@ function Login() {
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [showPassword, setShowPassword] = useState(false);
+  const [resetRequested, setResetRequested] = useState(false);
+  const showReset = isLogin && resetRequested;
 
   useEffect(() => {
     if (error) {
@@ -65,7 +68,7 @@ function Login() {
         await register(email, name, password);
         toast.success('Account created successfully!');
       }
-    } catch (_err) {
+    } catch {
       // Error is handled by the auth context and shown via toast
     }
   };
@@ -75,13 +78,14 @@ function Login() {
 
     try {
       await signInWithGoogle(authRedirectPath);
-    } catch (_err) {
+    } catch {
       // Error is handled by the auth context and shown via toast
     }
   };
 
   const toggleMode = () => {
     clearError();
+    setResetRequested(false);
     navigate(isLogin ? ROUTES.PUBLIC.SIGNUP : ROUTES.PUBLIC.LOGIN);
   };
 
@@ -96,6 +100,17 @@ function Login() {
         </div>
 
         <Card className="bg-[#18181b] border-[#27272a]">
+          {showReset ? (
+            <ForgotPassword
+              initialEmail={email}
+              onBack={(nextEmail) => {
+                setEmail(nextEmail);
+                setPassword('');
+                setResetRequested(false);
+              }}
+            />
+          ) : (
+          <>
           <CardHeader className="pb-6">
             <CardTitle className="text-xl font-semibold text-white text-center">
               {isLogin ? 'Sign in to your account' : 'Create your account'}
@@ -170,7 +185,10 @@ function Login() {
                     <button 
                       type="button" 
                       className="text-sm text-[#2563eb] hover:text-[#3b82f6]"
-                      onClick={() => toast.info('Password reset coming soon')}
+                      onClick={() => {
+                        clearError();
+                        setResetRequested(true);
+                      }}
                     >
                       Forgot password?
                     </button>
@@ -234,6 +252,8 @@ function Login() {
               </Link>
             </div>
           </CardContent>
+          </>
+          )}
         </Card>
       </div>
     </div>
